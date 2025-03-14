@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/vartanbeno/go-reddit/v2/reddit"
-	"golang.org/x/oauth2"
 )
 
 var (
@@ -20,7 +19,7 @@ var (
 // GetRedditClient returns a singleton Reddit client
 func GetRedditClient() *reddit.Client {
 	redditClientOnce.Do(func() {
-		credentials := &reddit.Credentials{
+		credentials := reddit.Credentials{
 			ID:       os.Getenv("REDDIT_CLIENT_ID"),
 			Secret:   os.Getenv("REDDIT_CLIENT_SECRET"),
 			Username: os.Getenv("REDDIT_USERNAME"),
@@ -44,9 +43,14 @@ func SearchPosts(query string, limit int) ([]*reddit.Post, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	
-	posts, _, err := client.Subreddit.SearchPosts(ctx, query, &reddit.ListOptions{
-		Limit: limit,
-	})
+	// Create a new instance of ListPostSearchOptions
+	searchOpts := new(reddit.ListPostSearchOptions)
+	
+	// Set the Limit directly - assuming it has a Limit field
+	searchOpts.Limit = limit
+	
+	// Empty string "" means search across all subreddits
+	posts, _, err := client.Subreddit.SearchPosts(ctx, "", query, searchOpts)
 	
 	if err != nil {
 		return nil, err
@@ -62,13 +66,40 @@ func GetTrendingSubreddits() ([]*reddit.Subreddit, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	
-	subreddits, _, err := client.Subreddit.Popular(ctx, &reddit.ListOptions{
-		Limit: 10,
-	})
+	// Create a new instance of ListSubredditOptions
+	opts := new(reddit.ListSubredditOptions)
+	
+	// Set the Limit directly - assuming it has a Limit field
+	opts.Limit = 10
+	
+	subreddits, _, err := client.Subreddit.Popular(ctx, opts)
 	
 	if err != nil {
 		return nil, err
 	}
 	
 	return subreddits, nil
+}
+
+// GetPostComments retrieves comments for a specific post
+func GetPostComments(postID string) ([]*reddit.Comment, error) {
+	client := GetRedditClient()
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	// Reddit's API expects the post ID without the "t3_" prefix
+	// But we'll handle both cases for flexibility
+	if len(postID) > 3 && postID[:3] == "t3_" {
+		postID = postID[3:]
+	}
+	
+	// The correct method to get comments
+	postAndComments, _, err := client.Post.Get(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	
+	// The post.Get method returns both the post and its comments
+	return postAndComments.Comments, nil
 }

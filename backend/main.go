@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	"github.com/rs/cors"
-	"github.com/prane/subplex/api"
+	"github.com/pranesh-j/subplexity/api"
 )
 
 func main() {
@@ -28,6 +28,7 @@ func main() {
 	// API routes
 	r.HandleFunc("/api/search", api.SearchHandler).Methods("GET")
 	r.HandleFunc("/api/trending", api.TrendingHandler).Methods("GET")
+	r.HandleFunc("/api/comments", api.CommentHandler).Methods("GET")
 	r.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("API is running"))
