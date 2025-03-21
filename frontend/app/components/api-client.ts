@@ -1,4 +1,4 @@
-// api-client.ts
+// frontend/app/components/api-client.ts
 export interface SearchRequest {
     query: string;
     searchMode: string;
@@ -17,6 +17,23 @@ export interface SearchRequest {
     score: number;
     commentCount?: number;
     type: string; // "post", "comment", or "subreddit"
+    highlights?: string[]; // New field for key excerpts
+  }
+  
+  export interface Citation {
+    index: number;
+    text: string;
+    url: string;
+    title: string;
+    type: string;
+    subreddit: string;
+  }
+  
+  export interface RequestParams {
+    query: string;
+    searchMode: string;
+    modelName: string;
+    limit: number;
   }
   
   export interface SearchResponse {
@@ -24,7 +41,10 @@ export interface SearchRequest {
     totalCount: number;
     reasoning?: string;
     answer?: string;
+    citations?: Citation[]; // New field for citations
     elapsedTime: number;
+    lastUpdated?: number; // New timestamp field
+    requestParams?: RequestParams; // New field for request metadata
   }
   
   export const searchReddit = async (request: SearchRequest): Promise<SearchResponse> => {
