@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/yourname/subplexity/internal/models"
+	"github.com/pranesh-j/subplexity/tree/main/backend/internal/models"
 )
 
 type RedditService struct {

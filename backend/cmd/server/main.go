@@ -8,8 +8,8 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"github.com/yourname/subplexity/api/handlers"
-	"github.com/yourname/subplexity/internal/services"
+	"github.com/pranesh-j/subplexity/tree/main/backend/api/handlers"
+	"github.com/pranesh-j/subplexity/tree/main/backend/internal/services"
 )
 
 func main() {

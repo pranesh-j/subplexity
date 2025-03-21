@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/yourname/subplexity/internal/models"
+	"github.com/pranesh-j/subplexity/internal/models"
 )
 
 type AIService struct {
@@ -70,29 +70,29 @@ func (s *AIService) processWithAnthropic(query, content string) (string, string,
 		return "", "", fmt.Errorf("missing Anthropic API key")
 	}
 
-	type anthropicMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-
+	// Fix: Correct structure for Anthropic API v1/messages
 	type anthropicRequest struct {
-		Model     string             `json:"model"`
-		Messages  []anthropicMessage `json:"messages"`
-		MaxTokens int                `json:"max_tokens"`
+		Model       string      `json:"model"`
+		System      string      `json:"system"`
+		Messages    []map[string]string `json:"messages"`
+		MaxTokens   int         `json:"max_tokens"`
+		Temperature float64     `json:"temperature"`
 	}
 
 	systemMessage := "You are an AI assistant analyzing Reddit search results. First, provide your reasoning process, then provide a comprehensive answer."
-	
-	// Format messages for Anthropic
-	messages := []anthropicMessage{
-		{Role: "system", Content: systemMessage},
-		{Role: "user", Content: content},
-	}
 
+	// Create the request body with the correct structure
 	requestBody := anthropicRequest{
 		Model:     "claude-3-sonnet-20240229",
-		Messages:  messages,
-		MaxTokens: 1000,
+		System:    systemMessage,
+		Messages: []map[string]string{
+			{
+				"role":    "user",
+				"content": content,
+			},
+		},
+		MaxTokens:   1000,
+		Temperature: 0.3,
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -116,12 +116,13 @@ func (s *AIService) processWithAnthropic(query, content string) (string, string,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(resp.Body)
 		return "", "", fmt.Errorf("error response from Anthropic API: %s - %s", resp.Status, string(bodyBytes))
 	}
 
 	var response struct {
 		Content []struct {
+			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
 	}
@@ -130,10 +131,17 @@ func (s *AIService) processWithAnthropic(query, content string) (string, string,
 		return "", "", fmt.Errorf("error decoding response: %w", err)
 	}
 
-	// Extract reasoning and answer from the response
-	// This is a simplification - you'd want more robust parsing
-	fullText := response.Content[0].Text
-	reasoningEndIdx := len(fullText) / 2 // Simplified split
+	// Extract all text content from response
+	var fullText string
+	for _, content := range response.Content {
+		if content.Type == "text" {
+			fullText += content.Text
+		}
+	}
+
+	// Split into reasoning and answer
+	// This is a simplified approach - in production, you might want a more sophisticated algorithm
+	reasoningEndIdx := len(fullText) / 2 
 	
 	reasoning := fullText[:reasoningEndIdx]
 	answer := fullText[reasoningEndIdx:]
@@ -146,27 +154,24 @@ func (s *AIService) processWithOpenAI(query, content string) (string, string, er
 		return "", "", fmt.Errorf("missing OpenAI API key")
 	}
 
-	type openAIMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-
 	type openAIRequest struct {
-		Model       string          `json:"model"`
-		Messages    []openAIMessage `json:"messages"`
-		Temperature float64         `json:"temperature"`
-	}
-
-	systemPrompt := "You are analyzing Reddit search results. First, provide your reasoning process about the data, then provide a comprehensive answer to the user's query based on the Reddit content."
-
-	messages := []openAIMessage{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: content},
+		Model       string                   `json:"model"`
+		Messages    []map[string]interface{} `json:"messages"`
+		Temperature float64                  `json:"temperature"`
 	}
 
 	requestBody := openAIRequest{
-		Model:       "gpt-4",
-		Messages:    messages,
+		Model: "gpt-4",
+		Messages: []map[string]interface{}{
+			{
+				"role":    "system",
+				"content": "You are analyzing Reddit search results. First, provide your reasoning process about the data, then provide a comprehensive answer to the user's query based on the Reddit content.",
+			},
+			{
+				"role":    "user",
+				"content": content,
+			},
+		},
 		Temperature: 0.3,
 	}
 
@@ -190,7 +195,7 @@ func (s *AIService) processWithOpenAI(query, content string) (string, string, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(resp.Body)
 		return "", "", fmt.Errorf("error response from OpenAI API: %s - %s", resp.Status, string(bodyBytes))
 	}
 
@@ -206,8 +211,10 @@ func (s *AIService) processWithOpenAI(query, content string) (string, string, er
 		return "", "", fmt.Errorf("error decoding response: %w", err)
 	}
 
-	// Extract reasoning and answer from the response
-	// This is a simplification - you'd want more robust parsing
+	if len(response.Choices) == 0 {
+		return "", "", fmt.Errorf("no response content from OpenAI API")
+	}
+
 	fullText := response.Choices[0].Message.Content
 	reasoningEndIdx := len(fullText) / 2 // Simplified split
 	
@@ -237,13 +244,10 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
 		Temperature float64         `json:"temperature"`
 	}
 
-	systemPrompt := "You are analyzing Reddit search results. First, provide your reasoning process about the data, then provide a comprehensive answer to the user's query based on the Reddit content."
-
-	// Format content for Gemini
 	requestBody := geminiRequest{
 		Contents: []geminiContent{
 			{
-				Parts: []geminiPart{{Text: systemPrompt}},
+				Parts: []geminiPart{{Text: "You are analyzing Reddit search results. First, provide your reasoning process about the data, then provide a comprehensive answer to the user's query based on the Reddit content."}},
 				Role:  "system",
 			},
 			{
@@ -251,7 +255,8 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
 				Role:  "user",
 			},
 		},
-		Model:       "Gemini 1.5 Flash",
+		Model:       "gemini-pro",
+		Temperature: 0.3,
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -273,7 +278,7 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(resp.Body)
 		return "", "", fmt.Errorf("error response from Google API: %s - %s", resp.Status, string(bodyBytes))
 	}
 
@@ -290,11 +295,13 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return "", "", fmt.Errorf("error decoding response: %w", err)
 	}
+	
+	if len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 {
+		return "", "", fmt.Errorf("no response content from Gemini API")
+	}
 
-	// Extract reasoning and answer from the response
-	// This is a simplification - you'd want more robust parsing
 	fullText := response.Candidates[0].Content.Parts[0].Text
-	reasoningEndIdx := len(fullText) / 2 // Simplified split
+	reasoningEndIdx := len(fullText) / 2 
 	
 	reasoning := fullText[:reasoningEndIdx]
 	answer := fullText[reasoningEndIdx:]
