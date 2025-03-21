@@ -73,44 +73,10 @@ func (s *RedditService) SearchReddit(query string, searchMode string, limit int)
 	results, err := s.searchWithDirectUrl(query, searchMode, requestLimit)
 	if err != nil || len(results) == 0 {
 		log.Printf("First search method failed or returned no results, trying alternative method")
-<<<<<<< HEAD
 		results, err = s.searchWithTrendingEndpoint(query, searchMode, requestLimit)
 		if err != nil || len(results) == 0 {
 			return nil, fmt.Errorf("all search methods failed: %v", err)
 		}
-=======
-		results, err = s.searchWithTrendingEndpoint(query, searchMode, limit)
-		if err != nil || len(results) == 0 {
-			return nil, fmt.Errorf("all search methods failed: %v", err)
-		}
-	}
-	
-	// Process results to add highlights and handle special queries
-	for i := range results {
-		// Extract highlights for each result
-		results[i].Highlights = s.extractHighlights(results[i].Content, query)
-		
-		// For Bitcoin price queries, prioritize posts with price mentions
-		if isBitcoinPriceQuery(query) {
-			// Check if this post contains a price mention
-			if containsPriceMention(results[i].Title) || containsPriceMention(results[i].Content) {
-				// Promote this result
-				if i > 0 {
-					// Move to the front
-					temp := results[i]
-					copy(results[1:i+1], results[0:i])
-					results[0] = temp
-				}
-			}
-		}
-	}
-
-	// For time-sensitive queries, sort results by recency
-	if isTimeSensitiveQuery(query) {
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].CreatedUTC > results[j].CreatedUTC
-		})
->>>>>>> 7bc6577ce33208fd57365735d3a230e0599a4bf8
 	}
 	
 	// Filter for recency (last 60 days)
@@ -429,9 +395,6 @@ func (s *RedditService) searchWithTrendingEndpoint(query string, searchMode stri
         subredditSources = []string{"news", "worldnews", "politics"}
     } else if strings.Contains(strings.ToLower(query), "science") {
         subredditSources = []string{"science", "askscience", "space"}
-    } else if isBitcoinPriceQuery(query) {
-        // For Bitcoin price queries, focus on cryptocurrency subreddits
-        subredditSources = []string{"CryptoCurrency", "Bitcoin", "CryptoMarkets"}
     } else {
         // Default to these for general trending
         subredditSources = []string{"popular", "all"}
@@ -602,7 +565,6 @@ func (s *RedditService) searchWithTrendingEndpoint(query string, searchMode stri
                 
                 // Only add if we have at least a title
                 if result.Title != "" {
-<<<<<<< HEAD
                     // Basic keyword matching for all queries
                     titleAndContent := strings.ToLower(result.Title + " " + result.Content)
                     queryTerms := strings.Fields(strings.ToLower(query))
@@ -617,36 +579,6 @@ func (s *RedditService) searchWithTrendingEndpoint(query string, searchMode stri
                     if matches > 0 || len(queryTerms) == 0 {
                         subredditResults = append(subredditResults, result)
                     }
-=======
-                    // For Bitcoin price queries, add special filtering
-                    if isBitcoinPriceQuery(query) {
-                        // Check if this post is related to Bitcoin price
-                        titleAndContent := strings.ToLower(result.Title + " " + result.Content)
-                        if strings.Contains(titleAndContent, "bitcoin") || 
-                           strings.Contains(titleAndContent, "btc") {
-                            
-                            // If it contains price info, add it
-                            if containsPriceMention(result.Title) || containsPriceMention(result.Content) {
-                                subredditResults = append(subredditResults, result)
-                            }
-                        }
-                    } else {
-                        // For other queries, do basic keyword matching
-                        titleAndContent := strings.ToLower(result.Title + " " + result.Content)
-                        queryTerms := strings.Fields(strings.ToLower(query))
-                        matches := 0
-                        
-                        for _, term := range queryTerms {
-                            if len(term) > 2 && strings.Contains(titleAndContent, term) {
-                                matches++
-                            }
-                        }
-                        
-                        if matches > 0 || len(queryTerms) == 0 {
-                            subredditResults = append(subredditResults, result)
-                        }
-                    }
->>>>>>> 7bc6577ce33208fd57365735d3a230e0599a4bf8
                 }
             }
             
@@ -842,59 +774,4 @@ func splitIntoSentences(text string) []string {
 	}
 	
 	return sentences
-<<<<<<< HEAD
-=======
-}
-
-// isBitcoinPriceQuery checks if the query is asking about Bitcoin price
-func isBitcoinPriceQuery(query string) bool {
-    query = strings.ToLower(query)
-    return (strings.Contains(query, "bitcoin") || strings.Contains(query, "btc")) && 
-           (strings.Contains(query, "price") || 
-            strings.Contains(query, "worth") || 
-            strings.Contains(query, "value") || 
-            strings.Contains(query, "cost") ||
-            strings.Contains(query, "how much"))
-}
-
-// containsPriceMention checks if text contains a price reference
-func containsPriceMention(text string) bool {
-    text = strings.ToLower(text)
-    
-    // Check for price patterns
-    pricePatterns := []string{
-        "$", "usd", "dollar", "€", "₿", "btc", "price",
-        "k", "thousand", "million", "worth", "value",
-    }
-    
-    for _, pattern := range pricePatterns {
-        if strings.Contains(text, pattern) {
-            // Look for nearby numbers
-            re := regexp.MustCompile(`\d+(?:[,.]\d+)?`)
-            matches := re.FindAllString(text, -1)
-            if len(matches) > 0 {
-                return true
-            }
-        }
-    }
-    
-    return false
-}
-
-// isTimeSensitiveQuery checks if a query is asking for recent information
-func isTimeSensitiveQuery(query string) bool {
-    query = strings.ToLower(query)
-    timePatterns := []string{
-        "now", "today", "current", "latest", "recent", "live",
-        "right now", "at the moment", "as of now", "newest",
-    }
-    
-    for _, pattern := range timePatterns {
-        if strings.Contains(query, pattern) {
-            return true
-        }
-    }
-    
-    return false
->>>>>>> 7bc6577ce33208fd57365735d3a230e0599a4bf8
 }
