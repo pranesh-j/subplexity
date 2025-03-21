@@ -4,255 +4,512 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/pranesh-j/subplexity/internal/models"
 )
 
+// RedditService handles interactions with the Reddit API
 type RedditService struct {
-	ClientID     string
-	ClientSecret string
-	UserAgent    string
-	httpClient   *http.Client
+	ClientID      string
+	ClientSecret  string
+	UserAgent     string
+	httpClient    *http.Client
+	accessToken   string
+	tokenExpiry   time.Time
+	tokenLock     sync.Mutex
+	lastErrorTime time.Time
+	retryLimit    int
 }
 
+// NewRedditService creates a new Reddit service instance
 func NewRedditService(clientID, clientSecret string) *RedditService {
+	// Log credentials for debugging (first few chars only)
+	if clientID != "" && clientSecret != "" {
+		idPreview := clientID
+		secretPreview := clientSecret
+		if len(idPreview) > 5 {
+			idPreview = idPreview[:5] + "..."
+		}
+		if len(secretPreview) > 5 {
+			secretPreview = secretPreview[:5] + "..."
+		}
+		log.Printf("Initializing Reddit service with ID: %s, Secret: %s", idPreview, secretPreview)
+	} else {
+		log.Printf("WARNING: Initializing Reddit service with missing credentials!")
+	}
+	
 	return &RedditService{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		UserAgent:    "Subplexity/1.0",
+		UserAgent:    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		retryLimit: 3,
 	}
 }
 
 // SearchReddit performs a search on Reddit based on the provided query and search mode
 func (s *RedditService) SearchReddit(query string, searchMode string, limit int) ([]models.SearchResult, error) {
+	log.Printf("Starting Reddit search for query: '%s', mode: '%s', limit: %d", query, searchMode, limit)
+	
 	if limit <= 0 {
 		limit = 25 // Default limit
 	}
 
-	// Define the search URL based on the search mode
-	searchType := "sr,link,user"
-	switch searchMode {
-	case "Posts":
-		searchType = "link"
-	case "Comments":
-		searchType = "comment"
-	case "Communities":
-		searchType = "sr"
+	// Try multiple search methods
+	results, err := s.searchWithDirectUrl(query, searchMode, limit)
+	if err != nil || len(results) == 0 {
+		log.Printf("First search method failed or returned no results, trying alternative method")
+		return s.searchWithTrendingEndpoint(query, searchMode, limit)
+	}
+	
+	return results, nil
+}
+
+// searchWithDirectUrl searches directly using Reddit's API endpoints
+func (s *RedditService) searchWithDirectUrl(query string, searchMode string, limit int) ([]models.SearchResult, error) {
+	// First, try the more reliable trending endpoint if the query implies trending
+	if strings.Contains(strings.ToLower(query), "trend") || 
+	   strings.Contains(strings.ToLower(query), "popular") ||
+	   strings.Contains(strings.ToLower(query), "what's hot") {
+		results, err := s.searchWithTrendingEndpoint(query, searchMode, limit)
+		if err == nil && len(results) > 0 {
+			return results, nil
+		}
 	}
 
-	// Build the search URL
-	searchURL := fmt.Sprintf("https://www.reddit.com/search.json?q=%s&type=%s&limit=%d&sort=relevance",
-		url.QueryEscape(query), searchType, limit)
+	var searchURL string
+	
+	// Use search mode to modify search parameters
+	switch searchMode {
+	case "Posts":
+		searchURL = fmt.Sprintf("https://www.reddit.com/search.json?q=%s&type=link&limit=%d&sort=relevance&t=day",
+			url.QueryEscape(query), limit)
+	case "Comments":
+		searchURL = fmt.Sprintf("https://www.reddit.com/search.json?q=%s&type=comment&limit=%d&sort=relevance&t=day",
+			url.QueryEscape(query), limit)
+	case "Communities":
+		searchURL = fmt.Sprintf("https://www.reddit.com/search.json?q=%s&type=sr&limit=%d&sort=relevance",
+			url.QueryEscape(query), limit)
+	default:
+		// "All" search mode - try to be more specific
+		if strings.Contains(strings.ToLower(query), "trend") || 
+		   strings.Contains(strings.ToLower(query), "popular") {
+			// For trending queries, use more relevant timing
+			searchURL = fmt.Sprintf("https://www.reddit.com/search.json?q=%s&sort=hot&t=day&limit=%d",
+				url.QueryEscape(query), limit)
+		} else {
+			searchURL = fmt.Sprintf("https://www.reddit.com/search.json?q=%s&limit=%d&sort=relevance",
+				url.QueryEscape(query), limit)
+		}
+	}
+	
+	log.Printf("Search URL: %s", searchURL)
 
 	// Create the request
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
+		log.Printf("Error creating search request: %v", err)
+		return nil, fmt.Errorf("error creating search request: %w", err)
 	}
 
-	// Set the User-Agent header
+	// Set the User-Agent header - VERY IMPORTANT FOR REDDIT
 	req.Header.Set("User-Agent", s.UserAgent)
-
+	
 	// Execute the request
+	log.Println("Sending search request to Reddit")
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
+		log.Printf("Error executing search request: %v", err)
+		return nil, fmt.Errorf("error executing search request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Check the response status
+	log.Printf("Search response status: %s", resp.Status)
+	
+	// Read full response body
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Error reading response body: %v", err)
+		return nil, fmt.Errorf("error reading response body: %w", err)
+	}
+	
+	// Check for error responses
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("Error from Reddit API (%d): %s", resp.StatusCode, string(bodyBytes))
 		return nil, fmt.Errorf("error response from Reddit API: %s", resp.Status)
 	}
 
-	// Read the entire response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading response body: %w", err)
+	// Log a preview of the response
+	preview := string(bodyBytes)
+	if len(preview) > 500 {
+		preview = preview[:500]
 	}
+	log.Printf("Response body preview: %s", preview)
 
-	// Try to parse the response as a JSON object first
-	var redditResponse map[string]interface{}
-	err = json.Unmarshal(body, &redditResponse)
+	// Try to parse the response
+	var redditResponse struct {
+		Data struct {
+			Children []struct {
+				Kind string `json:"kind"`
+				Data json.RawMessage `json:"data"`
+			} `json:"children"`
+		} `json:"data"`
+	}
+	
+	err = json.Unmarshal(bodyBytes, &redditResponse)
 	if err != nil {
-		// If that fails, try parsing as a JSON array
-		var redditArray []interface{}
-		err = json.Unmarshal(body, &redditArray)
-		if err != nil {
-			return nil, fmt.Errorf("error decoding response: %w", err)
+		log.Printf("Error parsing Reddit response: %v", err)
+		return nil, fmt.Errorf("error parsing Reddit response: %w", err)
+	}
+	
+	// Process the results
+	var results []models.SearchResult
+	
+	for _, child := range redditResponse.Data.Children {
+		// Use a generic structure for any Reddit item
+		var genericData map[string]interface{}
+		
+		if err := json.Unmarshal(child.Data, &genericData); err != nil {
+			log.Printf("Error parsing child data: %v", err)
+			continue
 		}
 		
-		// Handle array response
-		var results []models.SearchResult
-		for _, item := range redditArray {
-			itemMap, ok := item.(map[string]interface{})
-			if !ok {
-				continue
+		// Create a result based on the type
+		result := models.SearchResult{
+			Type: getTypeFromKind(child.Kind),
+			ID:   getString(genericData, "id"),
+		}
+		
+		// Fill in common fields
+		switch child.Kind {
+		case "t1": // Comment
+			result.Author = getString(genericData, "author")
+			result.Content = getString(genericData, "body")
+			result.Score = getInt(genericData, "score")
+			result.Subreddit = getString(genericData, "subreddit")
+			result.Title = "Comment in r/" + result.Subreddit
+			result.CreatedUTC = getInt64(genericData, "created_utc")
+			
+			permalink := getString(genericData, "permalink")
+			if permalink != "" {
+				result.URL = "https://www.reddit.com" + permalink
+			} else {
+				result.URL = "https://www.reddit.com/r/" + result.Subreddit
 			}
 			
-			kind, _ := itemMap["kind"].(string)
-			data, ok := itemMap["data"].(map[string]interface{})
-			if !ok {
-				continue
+		case "t3": // Post
+			result.Author = getString(genericData, "author")
+			result.Title = getString(genericData, "title")
+			result.Content = getString(genericData, "selftext")
+			result.Score = getInt(genericData, "score")
+			result.Subreddit = getString(genericData, "subreddit")
+			result.CreatedUTC = getInt64(genericData, "created_utc")
+			result.CommentCount = getInt(genericData, "num_comments")
+			
+			permalink := getString(genericData, "permalink")
+			if permalink != "" {
+				result.URL = "https://www.reddit.com" + permalink
+			} else {
+				result.URL = getString(genericData, "url")
 			}
 			
-			result := models.SearchResult{}
-			
-			// Extract common fields
-			if id, ok := data["id"].(string); ok {
-				result.ID = id
-			}
-			if subreddit, ok := data["subreddit"].(string); ok {
-				result.Subreddit = subreddit
-			}
-			if author, ok := data["author"].(string); ok {
-				result.Author = author
-			}
-			if url, ok := data["url"].(string); ok {
-				result.URL = url
-			}
-			if createdUTC, ok := data["created_utc"].(float64); ok {
-				result.CreatedUTC = int64(createdUTC)
-			}
-			if score, ok := data["score"].(float64); ok {
-				result.Score = int(score)
-			}
-			
-			// Handle different types
-			switch kind {
-			case "t1": // Comment
-				result.Type = "comment"
-				if title, ok := data["link_title"].(string); ok {
-					result.Title = "Comment in r/" + result.Subreddit + ": " + title
-				} else {
-					result.Title = "Comment in r/" + result.Subreddit
-				}
-				if body, ok := data["body"].(string); ok {
-					result.Content = body
-				}
-			case "t3": // Post
-				result.Type = "post"
-				if title, ok := data["title"].(string); ok {
-					result.Title = title
-				}
-				if selfText, ok := data["selftext"].(string); ok {
-					result.Content = selfText
-				}
-				if numComments, ok := data["num_comments"].(float64); ok {
-					result.CommentCount = int(numComments)
-				}
-			case "t5": // Subreddit
-				result.Type = "subreddit"
-				if displayName, ok := data["display_name"].(string); ok {
-					result.Title = "r/" + displayName
-				}
-				if description, ok := data["public_description"].(string); ok {
-					result.Content = description
-				}
-				if subscribers, ok := data["subscribers"].(float64); ok {
-					// Just store it somewhere, could add a field for this if needed
-					_ = int(subscribers)
-				}
-			}
-			
+		case "t5": // Subreddit
+			result.Title = "r/" + getString(genericData, "display_name")
+			result.Subreddit = getString(genericData, "display_name")
+			result.Content = getString(genericData, "public_description")
+			result.Score = getInt(genericData, "subscribers")
+			result.CreatedUTC = getInt64(genericData, "created_utc")
+			result.URL = "https://www.reddit.com/r/" + getString(genericData, "display_name")
+		}
+		
+		// Only add if we have at least a title
+		if result.Title != "" {
 			results = append(results, result)
 		}
-		
-		return results, nil
-	} else {
-		// Handle object response (standard Reddit API format)
-		var results []models.SearchResult
-		
-		data, ok := redditResponse["data"].(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid response format: missing data field")
+	}
+	
+	log.Printf("Found %d valid results", len(results))
+	return results, nil
+}
+
+// searchWithTrendingEndpoint directly accesses Reddit's trending content
+func (s *RedditService) searchWithTrendingEndpoint(query string, searchMode string, limit int) ([]models.SearchResult, error) {
+    var subredditSources []string
+    
+    // Popular subreddits to check for trending content
+    popularSubreddits := []string{
+        "popular", "all", "news", "worldnews", "AskReddit", "technology", 
+        "science", "gaming", "movies", "politics", "todayilearned",
+    }
+    
+    // Select which subreddits to check based on query
+    if strings.Contains(strings.ToLower(query), "tech") || 
+       strings.Contains(strings.ToLower(query), "technology") {
+        subredditSources = []string{"technology", "gadgets", "programming"}
+    } else if strings.Contains(strings.ToLower(query), "gaming") || 
+              strings.Contains(strings.ToLower(query), "game") {
+        subredditSources = []string{"gaming", "games", "pcgaming"}
+    } else if strings.Contains(strings.ToLower(query), "news") || 
+              strings.Contains(strings.ToLower(query), "world") {
+        subredditSources = []string{"news", "worldnews", "politics"}
+    } else if strings.Contains(strings.ToLower(query), "science") {
+        subredditSources = []string{"science", "askscience", "space"}
+    } else {
+        // Default to these for general trending
+        subredditSources = []string{"popular", "all"}
+        
+        // Add some from the popular list
+        for _, sr := range popularSubreddits {
+            if strings.Contains(strings.ToLower(query), strings.ToLower(sr)) {
+                subredditSources = []string{sr}
+                break
+            }
+        }
+    }
+    
+    var allResults []models.SearchResult
+    
+    // Search each subreddit in parallel
+    var wg sync.WaitGroup
+    var mu sync.Mutex
+    
+    for _, subreddit := range subredditSources {
+        wg.Add(1)
+        
+        go func(sr string) {
+            defer wg.Done()
+            
+            // Use different sorts for different queries
+            sort := "hot" // Default to hot for trending content
+            if strings.Contains(strings.ToLower(query), "new") {
+                sort = "new"
+            } else if strings.Contains(strings.ToLower(query), "top") {
+                sort = "top"
+            } else if strings.Contains(strings.ToLower(query), "best") {
+                sort = "best"
+            }
+            
+            // Use a smaller limit per subreddit
+            srLimit := limit / len(subredditSources)
+            if srLimit < 5 {
+                srLimit = 5
+            }
+            
+            timeframe := "day"  // Default to day
+            if strings.Contains(strings.ToLower(query), "week") {
+                timeframe = "week"
+            } else if strings.Contains(strings.ToLower(query), "month") {
+                timeframe = "month"
+            } else if strings.Contains(strings.ToLower(query), "year") {
+                timeframe = "year"
+            } else if strings.Contains(strings.ToLower(query), "all time") {
+                timeframe = "all"
+            }
+            
+            endpoint := fmt.Sprintf("https://www.reddit.com/r/%s/%s.json?limit=%d&t=%s", 
+                          sr, sort, srLimit, timeframe)
+                          
+            log.Printf("Fetching trending from: %s", endpoint)
+            
+            req, err := http.NewRequest("GET", endpoint, nil)
+            if err != nil {
+                log.Printf("Error creating trending request: %v", err)
+                return
+            }
+            
+            req.Header.Set("User-Agent", s.UserAgent)
+            
+            resp, err := s.httpClient.Do(req)
+            if err != nil {
+                log.Printf("Error executing trending request: %v", err)
+                return
+            }
+            defer resp.Body.Close()
+            
+            if resp.StatusCode != http.StatusOK {
+                log.Printf("Error from Reddit trending API: %s", resp.Status)
+                return
+            }
+            
+            bodyBytes, err := io.ReadAll(resp.Body)
+            if err != nil {
+                log.Printf("Error reading trending response: %v", err)
+                return
+            }
+            
+            var trendingResponse struct {
+                Data struct {
+                    Children []struct {
+                        Kind string `json:"kind"`
+                        Data json.RawMessage `json:"data"`
+                    } `json:"children"`
+                } `json:"data"`
+            }
+            
+            err = json.Unmarshal(bodyBytes, &trendingResponse)
+            if err != nil {
+                log.Printf("Error parsing trending response: %v", err)
+                return
+            }
+            
+            var subredditResults []models.SearchResult
+            
+            for _, child := range trendingResponse.Data.Children {
+                // Skip if not a post (for trending we want posts)
+                if child.Kind != "t3" && searchMode != "Communities" && searchMode != "Comments" {
+                    continue
+                }
+                
+                var genericData map[string]interface{}
+                
+                if err := json.Unmarshal(child.Data, &genericData); err != nil {
+                    continue
+                }
+                
+                result := models.SearchResult{
+                    Type: getTypeFromKind(child.Kind),
+                    ID:   getString(genericData, "id"),
+                }
+                
+                // Fill in fields based on type
+                switch child.Kind {
+                case "t1": // Comment
+                    if searchMode == "Posts" {
+                        continue // Skip comments in post mode
+                    }
+                    result.Author = getString(genericData, "author")
+                    result.Content = getString(genericData, "body")
+                    result.Score = getInt(genericData, "score")
+                    result.Subreddit = getString(genericData, "subreddit")
+                    result.Title = "Comment in r/" + result.Subreddit
+                    result.CreatedUTC = getInt64(genericData, "created_utc")
+                    
+                    permalink := getString(genericData, "permalink")
+                    if permalink != "" {
+                        result.URL = "https://www.reddit.com" + permalink
+                    } else {
+                        result.URL = "https://www.reddit.com/r/" + result.Subreddit
+                    }
+                    
+                case "t3": // Post
+                    if searchMode == "Comments" || searchMode == "Communities" {
+                        continue // Skip posts in comment or community mode
+                    }
+                    result.Author = getString(genericData, "author")
+                    result.Title = getString(genericData, "title")
+                    result.Content = getString(genericData, "selftext")
+                    result.Score = getInt(genericData, "score")
+                    result.Subreddit = getString(genericData, "subreddit")
+                    result.CreatedUTC = getInt64(genericData, "created_utc")
+                    result.CommentCount = getInt(genericData, "num_comments")
+                    
+                    permalink := getString(genericData, "permalink")
+                    if permalink != "" {
+                        result.URL = "https://www.reddit.com" + permalink
+                    } else {
+                        result.URL = getString(genericData, "url")
+                    }
+                    
+                case "t5": // Subreddit
+                    if searchMode == "Posts" || searchMode == "Comments" {
+                        continue // Skip subreddits in post or comment mode
+                    }
+                    result.Title = "r/" + getString(genericData, "display_name")
+                    result.Subreddit = getString(genericData, "display_name")
+                    result.Content = getString(genericData, "public_description")
+                    result.Score = getInt(genericData, "subscribers")
+                    result.CreatedUTC = getInt64(genericData, "created_utc")
+                    result.URL = "https://www.reddit.com/r/" + getString(genericData, "display_name")
+                }
+                
+                // Only add if we have at least a title
+                if result.Title != "" {
+                    subredditResults = append(subredditResults, result)
+                }
+            }
+            
+            // Add these results to the overall results
+            if len(subredditResults) > 0 {
+                mu.Lock()
+                allResults = append(allResults, subredditResults...)
+                mu.Unlock()
+            }
+            
+        }(subreddit)
+    }
+    
+    // Wait for all goroutines to complete
+    wg.Wait()
+    
+    log.Printf("Found %d trending results across %d subreddits", len(allResults), len(subredditSources))
+    
+    // If we have too many, truncate to the limit
+    if len(allResults) > limit {
+        allResults = allResults[:limit]
+    }
+    
+    return allResults, nil
+}
+
+// Helper function to get string value from map with type safety
+func getString(data map[string]interface{}, key string) string {
+	if val, ok := data[key]; ok {
+		if strVal, ok := val.(string); ok {
+			return strVal
 		}
-		
-		children, ok := data["children"].([]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid response format: missing children array")
+	}
+	return ""
+}
+
+// Helper function to get int value from map with type safety
+func getInt(data map[string]interface{}, key string) int {
+	if val, ok := data[key]; ok {
+		switch v := val.(type) {
+		case int:
+			return v
+		case float64:
+			return int(v)
+		case string:
+			// Try to parse string to int if needed
 		}
-		
-		for _, child := range children {
-			childMap, ok := child.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			
-			kind, _ := childMap["kind"].(string)
-			childData, ok := childMap["data"].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			
-			result := models.SearchResult{}
-			
-			// Extract common fields
-			if id, ok := childData["id"].(string); ok {
-				result.ID = id
-			}
-			if subreddit, ok := childData["subreddit"].(string); ok {
-				result.Subreddit = subreddit
-			}
-			if author, ok := childData["author"].(string); ok {
-				result.Author = author
-			}
-			if url, ok := childData["url"].(string); ok {
-				result.URL = url
-			}
-			if createdUTC, ok := childData["created_utc"].(float64); ok {
-				result.CreatedUTC = int64(createdUTC)
-			}
-			if score, ok := childData["score"].(float64); ok {
-				result.Score = int(score)
-			}
-			
-			// Handle different types
-			switch kind {
-			case "t1": // Comment
-				result.Type = "comment"
-				if title, ok := childData["link_title"].(string); ok {
-					result.Title = "Comment in r/" + result.Subreddit + ": " + title
-				} else {
-					result.Title = "Comment in r/" + result.Subreddit
-				}
-				if body, ok := childData["body"].(string); ok {
-					result.Content = body
-				}
-			case "t3": // Post
-				result.Type = "post"
-				if title, ok := childData["title"].(string); ok {
-					result.Title = title
-				}
-				if selfText, ok := childData["selftext"].(string); ok {
-					result.Content = selfText
-				}
-				if numComments, ok := childData["num_comments"].(float64); ok {
-					result.CommentCount = int(numComments)
-				}
-			case "t5": // Subreddit
-				result.Type = "subreddit"
-				if displayName, ok := childData["display_name"].(string); ok {
-					result.Title = "r/" + displayName
-				}
-				if description, ok := childData["public_description"].(string); ok {
-					result.Content = description
-				}
-				if subscribers, ok := childData["subscribers"].(float64); ok {
-					// Just store it somewhere, could add a field for this if needed
-					_ = int(subscribers)
-				}
-			}
-			
-			results = append(results, result)
+	}
+	return 0
+}
+
+// Helper function to get int64 value from map with type safety
+func getInt64(data map[string]interface{}, key string) int64 {
+	if val, ok := data[key]; ok {
+		switch v := val.(type) {
+		case int64:
+			return v
+		case float64:
+			return int64(v)
+		case int:
+			return int64(v)
 		}
-		
-		return results, nil
+	}
+	return 0
+}
+
+// Helper function to convert Reddit "kind" to our type
+func getTypeFromKind(kind string) string {
+	switch kind {
+	case "t1":
+		return "comment"
+	case "t3":
+		return "post"
+	case "t5":
+		return "subreddit"
+	default:
+		return "unknown"
 	}
 }

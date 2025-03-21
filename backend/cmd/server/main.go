@@ -15,30 +15,38 @@ import (
 func main() {
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using default environment variables")
+		log.Println("Warning: No .env file found, using environment variables")
 	}
 
+	// Get required environment variables
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
+	redditClientID := os.Getenv("REDDIT_API_CLIENT_ID")
+	redditClientSecret := os.Getenv("REDDIT_API_CLIENT_SECRET")
+
+	if redditClientID == "" || redditClientSecret == "" {
+		log.Println("Warning: Reddit API credentials not set. Set REDDIT_API_CLIENT_ID and REDDIT_API_CLIENT_SECRET environment variables")
+	}
+
 	// Initialize services
-	redditService := services.NewRedditService(
-		os.Getenv("REDDIT_API_CLIENT_ID"),
-		os.Getenv("REDDIT_API_CLIENT_SECRET"),
-	)
+	redditService := services.NewRedditService(redditClientID, redditClientSecret)
 	aiService := services.NewAIService()
 
 	// Initialize handlers
 	searchHandler := handlers.NewSearchHandler(redditService, aiService)
 
-	// Set up router
-	r := gin.Default()
+	// Set up router - using production mode
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(gin.Logger())
 
-	// Configure CORS
+	// Configure CORS for development and production
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowOrigins:     []string{"http://localhost:3000", "https://subplexity.vercel.app"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
