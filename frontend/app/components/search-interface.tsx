@@ -1,11 +1,15 @@
+// Updated version of frontend/app/components/search-interface.tsx
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Globe, Code, Image, Video } from "lucide-react"
 import { Button } from "./ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select"
 import { TextareaAutosize } from "./ui/textarea-autosize"
 import { searchReddit, SearchResponse } from "./api-client"
+import { ResearchProgress, ResearchStep } from "./research-progress"
+import AIAnswer from "./ai-answer"
+import SearchCitations from "./search-citations"
 
 const searchModes = [
   { icon: Globe, label: "All" },
@@ -21,6 +25,16 @@ export function SearchInterface() {
   const [isSearching, setIsSearching] = useState(false)
   const [searchResults, setSearchResults] = useState<SearchResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  
+  // New state for research progress
+  const [researchSteps, setResearchSteps] = useState<ResearchStep[]>([
+    { title: "Creating research plan", status: "pending" },
+    { title: "Searching Reddit", status: "pending" },
+    { title: "Analyzing results", status: "pending" },
+    { title: "Generating answer", status: "pending" },
+  ])
+  const [currentStep, setCurrentStep] = useState(0)
+  const [streamedAnswer, setStreamedAnswer] = useState("")
 
   const handleSearch = async () => {
     if (!query.trim()) {
@@ -30,20 +44,94 @@ export function SearchInterface() {
 
     setIsSearching(true)
     setError(null)
+    setStreamedAnswer("")
+    setSearchResults(null)
     
+    // Reset and start research steps
+    const initialSteps = [
+      { title: "Creating research plan", status: "in-progress" },
+      { title: "Searching Reddit", status: "pending" },
+      { title: "Analyzing results", status: "pending" },
+      { title: "Generating answer", status: "pending" },
+    ]
+    setResearchSteps(initialSteps)
+    setCurrentStep(0)
+    
+    // Use normal fetch for the search
     try {
+      // Start with the research plan (step 0)
+      setTimeout(() => {
+        // Update to show searching Reddit (step 1)
+        setResearchSteps(prev => {
+          const updated = [...prev]
+          updated[0].status = "complete"
+          updated[1].status = "in-progress"
+          return updated
+        })
+        setCurrentStep(1)
+      }, 1500)
+      
+      // Make the actual search request
       const results = await searchReddit({
         query,
         searchMode,
         modelName,
       })
       
+      // Update to show analyzing results (step 2)
+      setResearchSteps(prev => {
+        const updated = [...prev]
+        updated[1].status = "complete"
+        updated[2].status = "in-progress"
+        return updated
+      })
+      setCurrentStep(2)
+      
+      // Simulate streaming by showing partial results
       setSearchResults(results)
+      
+      // Begin "streaming" the answer with a delay
+      setTimeout(() => {
+        // Update to show generating answer (step 3)
+        setResearchSteps(prev => {
+          const updated = [...prev]
+          updated[2].status = "complete"
+          updated[3].status = "in-progress"
+          return updated
+        })
+        setCurrentStep(3)
+        
+        // Simulate streaming the answer by slicing it into parts
+        const answer = results.answer || ""
+        let currentPos = 0
+        const chunkSize = 5
+        
+        const streamInterval = setInterval(() => {
+          if (currentPos < answer.length) {
+            const nextPos = Math.min(currentPos + chunkSize, answer.length)
+            const chunk = answer.substring(currentPos, nextPos)
+            setStreamedAnswer(prev => prev + chunk)
+            currentPos = nextPos
+          } else {
+            clearInterval(streamInterval)
+            // Mark final step as complete
+            setResearchSteps(prev => {
+              const updated = [...prev]
+              updated[3].status = "complete"
+              return updated
+            })
+            setIsSearching(false)
+          }
+        }, 20)
+      }, 1500)
+      
     } catch (err) {
       console.error("Search error:", err)
       setError("Failed to search Reddit: " + (err instanceof Error ? err.message : "Unknown error"))
-    } finally {
       setIsSearching(false)
+      
+      // Reset research steps to show error
+      setResearchSteps(initialSteps.map(step => ({ ...step, status: "pending" })))
     }
   }
 
@@ -114,80 +202,92 @@ export function SearchInterface() {
         </div>
       )}
 
-      {searchResults && (
-        <div className="space-y-6 mt-8">
-          <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-6">
-            <h2 className="text-xl font-bold mb-4">AI Analysis</h2>
-            {searchResults.reasoning && (
-              <div className="mb-6">
-                <h3 className="text-sm font-medium text-zinc-400 mb-2">Reasoning</h3>
-                <div className="p-4 bg-zinc-800/50 rounded-lg text-zinc-300">
-                  {searchResults.reasoning}
-                </div>
-              </div>
-            )}
-            {searchResults.answer && (
-              <div>
-                <h3 className="text-sm font-medium text-zinc-400 mb-2">Answer</h3>
-                <div className="text-white leading-relaxed">
-                  {searchResults.answer}
-                </div>
-              </div>
-            )}
-          </div>
+      {/* Show research progress during search */}
+      {isSearching && (
+        <ResearchProgress 
+          steps={researchSteps} 
+          currentStep={currentStep} 
+        />
+      )}
 
-          <div>
-            <h2 className="text-xl font-bold mb-4">Search Results</h2>
-            <div className="space-y-4">
-              {searchResults.results.map((result) => (
-                <div 
-                  key={result.id} 
-                  className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="bg-[#FF4500]/10 text-[#FF4500] rounded-full p-2 flex-shrink-0">
-                      {result.type === "post" && <Code className="h-4 w-4" />}
-                      {result.type === "comment" && <Image className="h-4 w-4" />}
-                      {result.type === "subreddit" && <Video className="h-4 w-4" />}
+      {/* Show streamed answer if available */}
+      {streamedAnswer && (
+        <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-6 mt-4">
+          <h2 className="text-xl font-bold mb-4">AI Analysis</h2>
+          {searchResults?.reasoning && (
+            <div className="mb-6">
+              <h3 className="text-sm font-medium text-zinc-400 mb-2">Reasoning</h3>
+              <div className="p-4 bg-zinc-800/50 rounded-lg text-zinc-300">
+                {searchResults.reasoning}
+              </div>
+            </div>
+          )}
+          <AIAnswer 
+            answer={streamedAnswer} 
+            citations={searchResults?.citations}
+            lastUpdated={searchResults?.lastUpdated}
+          />
+          
+          {/* Show citations if available */}
+          {searchResults?.citations && searchResults.citations.length > 0 && (
+            <SearchCitations citations={searchResults.citations} />
+          )}
+        </div>
+      )}
+
+      {/* Show search results */}
+      {searchResults?.results && searchResults.results.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-xl font-bold mb-4">Search Results</h2>
+          <div className="space-y-4">
+            {searchResults.results.map((result) => (
+              <div 
+                key={result.id} 
+                className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="bg-[#FF4500]/10 text-[#FF4500] rounded-full p-2 flex-shrink-0">
+                    {result.type === "post" && <Code className="h-4 w-4" />}
+                    {result.type === "comment" && <Image className="h-4 w-4" />}
+                    {result.type === "subreddit" && <Video className="h-4 w-4" />}
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-lg font-medium">
+                      <a 
+                        href={result.url} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="hover:text-[#FF4500] transition-colors"
+                      >
+                        {result.title}
+                      </a>
+                    </h3>
+                    <div className="flex items-center gap-2 text-sm text-zinc-400 mt-1">
+                      <span>r/{result.subreddit}</span>
+                      <span>•</span>
+                      <span>u/{result.author}</span>
+                      <span>•</span>
+                      <span>{new Date(result.createdUtc * 1000).toLocaleDateString()}</span>
                     </div>
-                    <div className="flex-1">
-                      <h3 className="text-lg font-medium">
-                        <a 
-                          href={result.url} 
-                          target="_blank" 
-                          rel="noopener noreferrer" 
-                          className="hover:text-[#FF4500] transition-colors"
-                        >
-                          {result.title}
-                        </a>
-                      </h3>
-                      <div className="flex items-center gap-2 text-sm text-zinc-400 mt-1">
-                        <span>r/{result.subreddit}</span>
-                        <span>•</span>
-                        <span>u/{result.author}</span>
-                        <span>•</span>
-                        <span>{new Date(result.createdUtc * 1000).toLocaleDateString()}</span>
-                      </div>
-                      {result.content && (
-                        <p className="mt-3 text-zinc-300 line-clamp-3">
-                          {result.content}
-                        </p>
-                      )}
-                      <div className="flex items-center gap-4 mt-3 text-sm">
+                    {result.content && (
+                      <p className="mt-3 text-zinc-300 line-clamp-3">
+                        {result.content}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-4 mt-3 text-sm">
+                      <span className="text-zinc-400">
+                        {result.score} points
+                      </span>
+                      {result.commentCount !== undefined && (
                         <span className="text-zinc-400">
-                          {result.score} points
+                          {result.commentCount} comments
                         </span>
-                        {result.commentCount !== undefined && (
-                          <span className="text-zinc-400">
-                            {result.commentCount} comments
-                          </span>
-                        )}
-                      </div>
+                      )}
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
