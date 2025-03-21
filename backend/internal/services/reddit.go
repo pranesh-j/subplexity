@@ -1,3 +1,4 @@
+// backend/internal/services/reddit.go
 package services
 
 import (
@@ -5,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -59,18 +63,146 @@ func NewRedditService(clientID, clientSecret string) *RedditService {
 func (s *RedditService) SearchReddit(query string, searchMode string, limit int) ([]models.SearchResult, error) {
 	log.Printf("Starting Reddit search for query: '%s', mode: '%s', limit: %d", query, searchMode, limit)
 	
-	if limit <= 0 {
-		limit = 25 // Default limit
+	// Request more results than needed for filtering
+	requestLimit := 25
+	if limit > 0 && limit < 25 {
+		requestLimit = limit * 2
 	}
 
-	// Try multiple search methods
-	results, err := s.searchWithDirectUrl(query, searchMode, limit)
+	// Get initial results - try multiple search methods
+	results, err := s.searchWithDirectUrl(query, searchMode, requestLimit)
 	if err != nil || len(results) == 0 {
 		log.Printf("First search method failed or returned no results, trying alternative method")
-		return s.searchWithTrendingEndpoint(query, searchMode, limit)
+		results, err = s.searchWithTrendingEndpoint(query, searchMode, requestLimit)
+		if err != nil || len(results) == 0 {
+			return nil, fmt.Errorf("all search methods failed: %v", err)
+		}
 	}
 	
-	return results, nil
+	// Filter for recency (last 60 days)
+	maxAgeInDays := 60
+	cutoffTime := time.Now().AddDate(0, 0, -maxAgeInDays).Unix()
+	
+	var recentResults []models.SearchResult
+	for _, result := range results {
+		if result.CreatedUTC >= cutoffTime {
+			recentResults = append(recentResults, result)
+		}
+	}
+	
+	log.Printf("Filtered to %d recent results (from last %d days)", len(recentResults), maxAgeInDays)
+	
+	// If no recent results, return original results with a warning
+	if len(recentResults) == 0 {
+		log.Printf("Warning: No results within last %d days, using older results", maxAgeInDays)
+		recentResults = results
+	}
+	
+	// Calculate relevance score for each result
+	type scoredResult struct {
+		result models.SearchResult
+		score  float64
+	}
+	
+	var scoredResults []scoredResult
+	for _, result := range recentResults {
+		score := calculateRelevanceScore(result, query)
+		scoredResults = append(scoredResults, scoredResult{result, score})
+	}
+	
+	// Sort by relevance score (highest first)
+	sort.Slice(scoredResults, func(i, j int) bool {
+		return scoredResults[i].score > scoredResults[j].score
+	})
+	
+	// Limit to top 5 (or specified limit) results
+	resultLimit := 5
+	if limit > 0 && limit < resultLimit {
+		resultLimit = limit
+	}
+	
+	if len(scoredResults) > resultLimit {
+		scoredResults = scoredResults[:resultLimit]
+	}
+	
+	// Extract just the results from the scored results
+	finalResults := make([]models.SearchResult, len(scoredResults))
+	for i, sr := range scoredResults {
+		finalResults[i] = sr.result
+	}
+	
+	log.Printf("Returning top %d most relevant results", len(finalResults))
+	
+	// Process results to add highlights
+	for i := range finalResults {
+		// Extract highlights for each result
+		finalResults[i].Highlights = s.extractHighlights(finalResults[i].Content, query)
+	}
+	
+	return finalResults, nil
+}
+
+// calculateRelevanceScore computes a relevance score for a search result
+func calculateRelevanceScore(result models.SearchResult, query string) float64 {
+	// Start with a base score
+	score := 0.0
+	
+	// Normalize text for matching
+	queryLower := strings.ToLower(query)
+	titleLower := strings.ToLower(result.Title)
+	contentLower := strings.ToLower(result.Content)
+	
+	// Extract keywords from query
+	queryWords := strings.Fields(queryLower)
+	
+	// Title matches are highly valuable
+	for _, word := range queryWords {
+		if len(word) > 2 && strings.Contains(titleLower, word) {
+			// Higher score for matches in title
+			score += 10.0
+		}
+	}
+	
+	// Exact title match is extremely valuable
+	if strings.Contains(titleLower, queryLower) {
+		score += 50.0
+	}
+	
+	// Content matches
+	for _, word := range queryWords {
+		if len(word) > 2 && strings.Contains(contentLower, word) {
+			// Content matches are good but less valuable than title
+			score += 5.0
+			
+			// Bonus for keyword frequency
+			count := strings.Count(contentLower, word)
+			if count > 1 {
+				score += math.Log2(float64(count)) * 2.0
+			}
+		}
+	}
+	
+	// Exact query in content
+	if strings.Contains(contentLower, queryLower) {
+		score += 20.0
+	}
+	
+	// Upvotes matter - more votes = more community validation
+	upvoteScore := math.Log10(float64(result.Score) + 10.0) * 3.0
+	score += upvoteScore
+	
+	// Comments indicate engagement
+	if result.CommentCount > 0 {
+		commentScore := math.Log10(float64(result.CommentCount) + 10.0) * 2.0
+		score += commentScore
+	}
+	
+	// Recency bonus (newer content gets boosted)
+	ageInDays := (time.Now().Unix() - result.CreatedUTC) / (60 * 60 * 24)
+	recencyBonus := math.Max(0, 30.0 - (float64(ageInDays) / 2.0))
+	score += recencyBonus
+	
+	return score
 }
 
 // searchWithDirectUrl searches directly using Reddit's API endpoints
@@ -433,7 +565,20 @@ func (s *RedditService) searchWithTrendingEndpoint(query string, searchMode stri
                 
                 // Only add if we have at least a title
                 if result.Title != "" {
-                    subredditResults = append(subredditResults, result)
+                    // Basic keyword matching for all queries
+                    titleAndContent := strings.ToLower(result.Title + " " + result.Content)
+                    queryTerms := strings.Fields(strings.ToLower(query))
+                    matches := 0
+                    
+                    for _, term := range queryTerms {
+                        if len(term) > 2 && strings.Contains(titleAndContent, term) {
+                            matches++
+                        }
+                    }
+                    
+                    if matches > 0 || len(queryTerms) == 0 {
+                        subredditResults = append(subredditResults, result)
+                    }
                 }
             }
             
@@ -512,4 +657,121 @@ func getTypeFromKind(kind string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// extractHighlights finds important excerpts in the content based on the query
+func (s *RedditService) extractHighlights(content string, query string) []string {
+	// Split query into keywords
+	keywords := strings.Fields(strings.ToLower(query))
+	
+	// Filter out common words
+	stopWords := map[string]bool{
+		"a": true, "an": true, "the": true, "and": true, "or": true, "but": true,
+		"is": true, "are": true, "was": true, "were": true, "be": true, "being": true,
+		"in": true, "on": true, "at": true, "to": true, "for": true, "with": true,
+		"about": true, "what": true, "when": true, "where": true, "who": true, "why": true,
+		"how": true, "of": true, "from": true, "by": true,
+	}
+	
+	var filteredKeywords []string
+	for _, word := range keywords {
+		if !stopWords[word] && len(word) > 2 {
+			filteredKeywords = append(filteredKeywords, word)
+		}
+	}
+	
+	// If no meaningful keywords left, return empty
+	if len(filteredKeywords) == 0 {
+		return nil
+	}
+	
+	// Split content into sentences
+	sentences := splitIntoSentences(content)
+	
+	// Score each sentence based on keyword matches
+	type scoredSentence struct {
+		text  string
+		score int
+	}
+	
+	var scoredSentences []scoredSentence
+	for _, sentence := range sentences {
+		if len(strings.TrimSpace(sentence)) < 10 {
+			continue // Skip very short sentences
+		}
+		
+		score := 0
+		lowerSentence := strings.ToLower(sentence)
+		
+		for _, keyword := range filteredKeywords {
+			if strings.Contains(lowerSentence, keyword) {
+				score += 1
+			}
+		}
+		
+		// Only consider sentences with at least one keyword match
+		if score > 0 {
+			scoredSentences = append(scoredSentences, scoredSentence{
+				text:  sentence,
+				score: score,
+			})
+		}
+	}
+	
+	// Sort sentences by score (highest first)
+	sort.Slice(scoredSentences, func(i, j int) bool {
+		return scoredSentences[i].score > scoredSentences[j].score
+	})
+	
+	// Take top 3 sentences as highlights
+	var highlights []string
+	for i, sentence := range scoredSentences {
+		if i >= 3 {
+			break
+		}
+		
+		// Clean up and truncate if needed
+		highlight := strings.TrimSpace(sentence.text)
+		if len(highlight) > 200 {
+			highlight = highlight[:197] + "..."
+		}
+		
+		highlights = append(highlights, highlight)
+	}
+	
+	return highlights
+}
+
+// splitIntoSentences breaks text into sentences
+func splitIntoSentences(text string) []string {
+	// Regex for sentence splitting that handles abbreviations and special cases
+	re := regexp.MustCompile(`[.!?]\s+[A-Z]`)
+	
+	// Find all sentence boundaries
+	boundaries := re.FindAllStringIndex(text, -1)
+	
+	// If no boundaries found, return the whole text as one sentence
+	if len(boundaries) == 0 {
+		return []string{text}
+	}
+	
+	// Build sentences
+	var sentences []string
+	prevEnd := 0
+	
+	for _, boundary := range boundaries {
+		// End of sentence is position of the punctuation mark
+		endPos := boundary[0] + 1
+		sentences = append(sentences, text[prevEnd:endPos])
+		
+		// Start of next sentence is after the space
+		prevEnd = boundary[0] + 2
+	}
+	
+	// Add the last sentence if there's text left
+	if prevEnd < len(text) {
+		sentences = append(sentences, text[prevEnd:])
+	}
+	
+	return sentences
 }

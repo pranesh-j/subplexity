@@ -1,3 +1,4 @@
+// backend/internal/services/ai.go
 package services
 
 import (
@@ -7,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/pranesh-j/subplexity/internal/models"
@@ -32,37 +35,141 @@ func NewAIService() *AIService {
 
 // ProcessResults uses AI to analyze search results and generate a response
 func (s *AIService) ProcessResults(query string, results []models.SearchResult, modelName string) (string, string, error) {
-	// Prepare the content for the AI
-	var content string
-	content += fmt.Sprintf("Query: %s\n\n", query)
-	content += "Reddit Search Results:\n"
-
-	for i, result := range results {
-		if i >= 10 { // Limit to top 10 results for AI processing
-			break
-		}
-
-		content += fmt.Sprintf("---\nResult %d:\n", i+1)
-		content += fmt.Sprintf("Title: %s\n", result.Title)
-		content += fmt.Sprintf("Subreddit: r/%s\n", result.Subreddit)
-		content += fmt.Sprintf("Author: u/%s\n", result.Author)
-		content += fmt.Sprintf("Type: %s\n", result.Type)
-		content += fmt.Sprintf("Score: %d\n", result.Score)
-		content += fmt.Sprintf("Content: %s\n", result.Content)
-		content += fmt.Sprintf("URL: %s\n", result.URL)
-		content += "---\n\n"
-	}
+	// Create structured prompt with clear separation instructions
+	prompt := buildStructuredPrompt(query, results)
 
 	switch modelName {
 	case "Claude":
-		return s.processWithAnthropic(query, content)
+		return s.processWithAnthropic(query, prompt)
 	case "DeepSeek R1":
-		return s.processWithOpenAI(query, content) // DeepSeek integration would be here
+		return s.processWithOpenAI(query, prompt)
 	case "Google Gemini":
-		return s.processWithGemini(query, content)
+		return s.processWithGemini(query, prompt)
 	default:
-		return s.processWithAnthropic(query, content)
+		return s.processWithAnthropic(query, prompt)
 	}
+}
+
+// buildStructuredPrompt creates a detailed prompt with clear instructions
+func buildStructuredPrompt(query string, results []models.SearchResult) string {
+	var content strings.Builder
+	
+	// Start with clear instructions
+	content.WriteString("# Reddit Search Analysis Task\n\n")
+	content.WriteString(fmt.Sprintf("User Query: %s\n\n", query))
+	
+	content.WriteString("## Instructions:\n")
+	content.WriteString("1. Analyze the top Reddit search results below.\n")
+	content.WriteString("2. Provide a detailed reasoning process that shows your analysis of the content, relevance, and reliability of the results.\n")
+	content.WriteString("3. Provide a clear, comprehensive answer to the user's query based on the Reddit content.\n")
+	content.WriteString("4. Format citations using [1], [2], etc. that reference the numbered results below.\n")
+	content.WriteString("5. If the search results don't provide sufficient information, acknowledge this limitation.\n")
+	content.WriteString("6. IMPORTANT: Your response MUST have two clearly labeled sections: '## Reasoning' and '## Answer'.\n\n")
+	
+	content.WriteString("## Reddit Search Results:\n\n")
+	
+	// Number the results for easy citation - limit to top 10 for processing
+	resultLimit := len(results)
+	if resultLimit > 10 {
+		resultLimit = 10
+	}
+	
+	for i, result := range results[:resultLimit] {
+		content.WriteString(fmt.Sprintf("### Result %d:\n", i+1))
+		content.WriteString(fmt.Sprintf("- Title: %s\n", result.Title))
+		content.WriteString(fmt.Sprintf("- Subreddit: r/%s\n", result.Subreddit))
+		content.WriteString(fmt.Sprintf("- Author: u/%s\n", result.Author))
+		content.WriteString(fmt.Sprintf("- Type: %s\n", result.Type))
+		content.WriteString(fmt.Sprintf("- Score: %d upvotes\n", result.Score))
+		
+		if result.CommentCount > 0 {
+			content.WriteString(fmt.Sprintf("- Comments: %d\n", result.CommentCount))
+		}
+		
+		content.WriteString(fmt.Sprintf("- Posted: %s\n", formatTimeAgo(time.Unix(result.CreatedUTC, 0))))
+		content.WriteString(fmt.Sprintf("- URL: %s\n\n", result.URL))
+		content.WriteString("Content:\n")
+		
+		// Handle empty content
+		if result.Content == "" {
+			content.WriteString("(No content - title only post)\n\n")
+		} else {
+			content.WriteString(fmt.Sprintf("%s\n\n", result.Content))
+		}
+		
+		// Add highlights if available
+		if len(result.Highlights) > 0 {
+			content.WriteString("Key excerpts:\n")
+			for _, highlight := range result.Highlights {
+				content.WriteString(fmt.Sprintf("- \"%s\"\n", highlight))
+			}
+			content.WriteString("\n")
+		}
+		
+		content.WriteString("---\n\n")
+	}
+	
+	content.WriteString("## Expected Response Format:\n\n")
+	content.WriteString("### Reasoning\n")
+	content.WriteString("In this section, provide your detailed analysis of the Reddit results. Discuss:\n")
+	content.WriteString("- The credibility and relevance of the sources\n")
+	content.WriteString("- Agreement or disagreement among posts\n")
+	content.WriteString("- Trends or patterns in the posts\n")
+	content.WriteString("- How recent/current the information is\n\n")
+	
+	content.WriteString("### Answer\n")
+	content.WriteString("In this section, provide a comprehensive, direct answer to the user's query based on your analysis.\n")
+	content.WriteString("- State clear conclusions\n")
+	content.WriteString("- Use specific citations like [1], [2] to reference source posts\n")
+	content.WriteString("- Acknowledge any limitations in the available information\n")
+	content.WriteString("- Format the answer in clear paragraphs with markdown formatting as needed\n\n")
+	
+	return content.String()
+}
+
+// formatTimeAgo converts a time to a human-readable "X time ago" format
+func formatTimeAgo(t time.Time) string {
+	now := time.Now()
+	diff := now.Sub(t)
+	
+	if diff < time.Minute {
+		return "just now"
+	} else if diff < time.Hour {
+		minutes := int(diff.Minutes())
+		if minutes == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", minutes)
+	} else if diff < 24*time.Hour {
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
+	} else if diff < 48*time.Hour {
+		return "yesterday"
+	} else if diff < 7*24*time.Hour {
+		days := int(diff.Hours() / 24)
+		return fmt.Sprintf("%d days ago", days)
+	} else if diff < 30*24*time.Hour {
+		weeks := int(diff.Hours() / 24 / 7)
+		if weeks == 1 {
+			return "1 week ago"
+		}
+		return fmt.Sprintf("%d weeks ago", weeks)
+	} else if diff < 365*24*time.Hour {
+		months := int(diff.Hours() / 24 / 30)
+		if months == 1 {
+			return "1 month ago"
+		}
+		return fmt.Sprintf("%d months ago", months)
+	}
+	
+	years := int(diff.Hours() / 24 / 365)
+	if years == 1 {
+		return "1 year ago"
+	}
+	return fmt.Sprintf("%d years ago", years)
 }
 
 func (s *AIService) processWithAnthropic(query, content string) (string, string, error) {
@@ -70,16 +177,16 @@ func (s *AIService) processWithAnthropic(query, content string) (string, string,
 		return "", "", fmt.Errorf("missing Anthropic API key")
 	}
 
-	// Fix: Correct structure for Anthropic API v1/messages
+	// Structure for Anthropic API v1/messages
 	type anthropicRequest struct {
-		Model       string      `json:"model"`
-		System      string      `json:"system"`
-		Messages    []map[string]string `json:"messages"`
-		MaxTokens   int         `json:"max_tokens"`
-		Temperature float64     `json:"temperature"`
+		Model       string                   `json:"model"`
+		System      string                   `json:"system"`
+		Messages    []map[string]string      `json:"messages"`
+		MaxTokens   int                      `json:"max_tokens"`
+		Temperature float64                  `json:"temperature"`
 	}
 
-	systemMessage := "You are an AI assistant analyzing Reddit search results. First, provide your reasoning process, then provide a comprehensive answer."
+	systemMessage := "You are an AI assistant that analyzes Reddit search results. You provide clear reasoning followed by a comprehensive answer, with proper citations to the source posts."
 
 	// Create the request body with the correct structure
 	requestBody := anthropicRequest{
@@ -91,8 +198,8 @@ func (s *AIService) processWithAnthropic(query, content string) (string, string,
 				"content": content,
 			},
 		},
-		MaxTokens:   1000,
-		Temperature: 0.3,
+		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -139,13 +246,9 @@ func (s *AIService) processWithAnthropic(query, content string) (string, string,
 		}
 	}
 
-	// Split into reasoning and answer
-	// This is a simplified approach - in production, you might want a more sophisticated algorithm
-	reasoningEndIdx := len(fullText) / 2 
+	// Split response into reasoning and answer 
+	reasoning, answer := extractReasoningAndAnswer(fullText)
 	
-	reasoning := fullText[:reasoningEndIdx]
-	answer := fullText[reasoningEndIdx:]
-
 	return reasoning, answer, nil
 }
 
@@ -161,18 +264,18 @@ func (s *AIService) processWithOpenAI(query, content string) (string, string, er
 	}
 
 	requestBody := openAIRequest{
-		Model: "gpt-4",
+		Model: "gpt-4-turbo",
 		Messages: []map[string]interface{}{
 			{
 				"role":    "system",
-				"content": "You are analyzing Reddit search results. First, provide your reasoning process about the data, then provide a comprehensive answer to the user's query based on the Reddit content.",
+				"content": "You are an AI assistant that analyzes Reddit search results. You provide clear reasoning followed by a comprehensive answer, with proper citations to the source posts.",
 			},
 			{
 				"role":    "user",
 				"content": content,
 			},
 		},
-		Temperature: 0.3,
+		Temperature: 0.2,
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -216,11 +319,8 @@ func (s *AIService) processWithOpenAI(query, content string) (string, string, er
 	}
 
 	fullText := response.Choices[0].Message.Content
-	reasoningEndIdx := len(fullText) / 2 // Simplified split
+	reasoning, answer := extractReasoningAndAnswer(fullText)
 	
-	reasoning := fullText[:reasoningEndIdx]
-	answer := fullText[reasoningEndIdx:]
-
 	return reasoning, answer, nil
 }
 
@@ -245,17 +345,14 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
             Temperature float64 `json:"temperature"`
         } `json:"generationConfig"`
     }
-    
-    // Create the prompt with instructions about analyzing Reddit results
-    promptText := "You are analyzing Reddit search results. First, provide your reasoning process about the data, then provide a comprehensive answer to the user's query based on the Reddit content.\n\n" + content
 
-    // Initialize request with Gemini 2.0 Flash model
+    // Initialize request with Gemini model
     requestBody := geminiRequest{
         Contents: []geminiContent{
             {
                 Role: "user",
                 Parts: []geminiPart{
-                    {Text: promptText},
+                    {Text: content},
                 },
             },
         },
@@ -263,7 +360,7 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
         GenerationConfig: struct {
             Temperature float64 `json:"temperature"`
         }{
-            Temperature: 0.3,
+            Temperature: 0.2,
         },
     }
 
@@ -272,7 +369,6 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
         return "", "", fmt.Errorf("error marshaling request: %w", err)
     }
 
-    // Use the correct API endpoint for Gemini 2.0
     req, err := http.NewRequest("POST", "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key="+s.GoogleAPIKey, bytes.NewBuffer(jsonData))
     if err != nil {
         return "", "", fmt.Errorf("error creating request: %w", err)
@@ -310,10 +406,41 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
     }
 
     fullText := response.Candidates[0].Content.Parts[0].Text
-    reasoningEndIdx := len(fullText) / 2 
+    reasoning, answer := extractReasoningAndAnswer(fullText)
     
-    reasoning := fullText[:reasoningEndIdx]
-    answer := fullText[reasoningEndIdx:]
-
     return reasoning, answer, nil
+}
+
+// extractReasoningAndAnswer separates the response into reasoning and answer sections
+func extractReasoningAndAnswer(fullText string) (string, string) {
+	// Look for markdown section headers for reasoning and answer
+	reasoningRegex := regexp.MustCompile(`(?i)(?:#+\s*Reasoning|Reasoning:?)\s*`)
+	answerRegex := regexp.MustCompile(`(?i)(?:#+\s*Answer|Answer:?)\s*`)
+	
+	reasoningMatch := reasoningRegex.FindStringIndex(fullText)
+	answerMatch := answerRegex.FindStringIndex(fullText)
+	
+	if reasoningMatch != nil && answerMatch != nil && answerMatch[0] > reasoningMatch[0] {
+		// Found both markers in the expected order
+		reasoningStart := reasoningMatch[1] // End of "## Reasoning" marker
+		answerStart := answerMatch[0]      // Start of "## Answer" marker
+		
+		reasoning := strings.TrimSpace(fullText[reasoningStart:answerStart])
+		answer := strings.TrimSpace(fullText[answerMatch[1]:]) // From end of "## Answer" marker to end
+		
+		return reasoning, answer
+	}
+	
+	// Fallback: If we can't find clear markers, try to split the response roughly in half
+	midpoint := len(fullText) / 2
+	
+	// Try to find a paragraph break near the midpoint
+	for i := midpoint; i < len(fullText)-1; i++ {
+		if fullText[i] == '\n' && fullText[i+1] == '\n' {
+			return strings.TrimSpace(fullText[:i]), strings.TrimSpace(fullText[i+2:])
+		}
+	}
+	
+	// Last resort: Just split in half
+	return strings.TrimSpace(fullText[:midpoint]), strings.TrimSpace(fullText[midpoint:])
 }
