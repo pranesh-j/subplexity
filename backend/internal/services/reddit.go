@@ -1,3 +1,4 @@
+// backend/internal/services/reddit.go
 package services
 
 import (
@@ -7,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -67,7 +70,37 @@ func (s *RedditService) SearchReddit(query string, searchMode string, limit int)
 	results, err := s.searchWithDirectUrl(query, searchMode, limit)
 	if err != nil || len(results) == 0 {
 		log.Printf("First search method failed or returned no results, trying alternative method")
-		return s.searchWithTrendingEndpoint(query, searchMode, limit)
+		results, err = s.searchWithTrendingEndpoint(query, searchMode, limit)
+		if err != nil || len(results) == 0 {
+			return nil, fmt.Errorf("all search methods failed: %v", err)
+		}
+	}
+	
+	// Process results to add highlights and handle special queries
+	for i := range results {
+		// Extract highlights for each result
+		results[i].Highlights = s.extractHighlights(results[i].Content, query)
+		
+		// For Bitcoin price queries, prioritize posts with price mentions
+		if isBitcoinPriceQuery(query) {
+			// Check if this post contains a price mention
+			if containsPriceMention(results[i].Title) || containsPriceMention(results[i].Content) {
+				// Promote this result
+				if i > 0 {
+					// Move to the front
+					temp := results[i]
+					copy(results[1:i+1], results[0:i])
+					results[0] = temp
+				}
+			}
+		}
+	}
+
+	// For time-sensitive queries, sort results by recency
+	if isTimeSensitiveQuery(query) {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].CreatedUTC > results[j].CreatedUTC
+		})
 	}
 	
 	return results, nil
@@ -263,6 +296,9 @@ func (s *RedditService) searchWithTrendingEndpoint(query string, searchMode stri
         subredditSources = []string{"news", "worldnews", "politics"}
     } else if strings.Contains(strings.ToLower(query), "science") {
         subredditSources = []string{"science", "askscience", "space"}
+    } else if isBitcoinPriceQuery(query) {
+        // For Bitcoin price queries, focus on cryptocurrency subreddits
+        subredditSources = []string{"CryptoCurrency", "Bitcoin", "CryptoMarkets"}
     } else {
         // Default to these for general trending
         subredditSources = []string{"popular", "all"}
@@ -433,7 +469,34 @@ func (s *RedditService) searchWithTrendingEndpoint(query string, searchMode stri
                 
                 // Only add if we have at least a title
                 if result.Title != "" {
-                    subredditResults = append(subredditResults, result)
+                    // For Bitcoin price queries, add special filtering
+                    if isBitcoinPriceQuery(query) {
+                        // Check if this post is related to Bitcoin price
+                        titleAndContent := strings.ToLower(result.Title + " " + result.Content)
+                        if strings.Contains(titleAndContent, "bitcoin") || 
+                           strings.Contains(titleAndContent, "btc") {
+                            
+                            // If it contains price info, add it
+                            if containsPriceMention(result.Title) || containsPriceMention(result.Content) {
+                                subredditResults = append(subredditResults, result)
+                            }
+                        }
+                    } else {
+                        // For other queries, do basic keyword matching
+                        titleAndContent := strings.ToLower(result.Title + " " + result.Content)
+                        queryTerms := strings.Fields(strings.ToLower(query))
+                        matches := 0
+                        
+                        for _, term := range queryTerms {
+                            if len(term) > 2 && strings.Contains(titleAndContent, term) {
+                                matches++
+                            }
+                        }
+                        
+                        if matches > 0 || len(queryTerms) == 0 {
+                            subredditResults = append(subredditResults, result)
+                        }
+                    }
                 }
             }
             
@@ -512,4 +575,173 @@ func getTypeFromKind(kind string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// extractHighlights finds important excerpts in the content based on the query
+func (s *RedditService) extractHighlights(content string, query string) []string {
+	// Split query into keywords
+	keywords := strings.Fields(strings.ToLower(query))
+	
+	// Filter out common words
+	stopWords := map[string]bool{
+		"a": true, "an": true, "the": true, "and": true, "or": true, "but": true,
+		"is": true, "are": true, "was": true, "were": true, "be": true, "being": true,
+		"in": true, "on": true, "at": true, "to": true, "for": true, "with": true,
+		"about": true, "what": true, "when": true, "where": true, "who": true, "why": true,
+		"how": true, "of": true, "from": true, "by": true,
+	}
+	
+	var filteredKeywords []string
+	for _, word := range keywords {
+		if !stopWords[word] && len(word) > 2 {
+			filteredKeywords = append(filteredKeywords, word)
+		}
+	}
+	
+	// If no meaningful keywords left, return empty
+	if len(filteredKeywords) == 0 {
+		return nil
+	}
+	
+	// Split content into sentences
+	sentences := splitIntoSentences(content)
+	
+	// Score each sentence based on keyword matches
+	type scoredSentence struct {
+		text  string
+		score int
+	}
+	
+	var scoredSentences []scoredSentence
+	for _, sentence := range sentences {
+		if len(strings.TrimSpace(sentence)) < 10 {
+			continue // Skip very short sentences
+		}
+		
+		score := 0
+		lowerSentence := strings.ToLower(sentence)
+		
+		for _, keyword := range filteredKeywords {
+			if strings.Contains(lowerSentence, keyword) {
+				score += 1
+			}
+		}
+		
+		// Only consider sentences with at least one keyword match
+		if score > 0 {
+			scoredSentences = append(scoredSentences, scoredSentence{
+				text:  sentence,
+				score: score,
+			})
+		}
+	}
+	
+	// Sort sentences by score (highest first)
+	sort.Slice(scoredSentences, func(i, j int) bool {
+		return scoredSentences[i].score > scoredSentences[j].score
+	})
+	
+	// Take top 3 sentences as highlights
+	var highlights []string
+	for i, sentence := range scoredSentences {
+		if i >= 3 {
+			break
+		}
+		
+		// Clean up and truncate if needed
+		highlight := strings.TrimSpace(sentence.text)
+		if len(highlight) > 200 {
+			highlight = highlight[:197] + "..."
+		}
+		
+		highlights = append(highlights, highlight)
+	}
+	
+	return highlights
+}
+
+// splitIntoSentences breaks text into sentences
+func splitIntoSentences(text string) []string {
+	// Regex for sentence splitting that handles abbreviations and special cases
+	re := regexp.MustCompile(`[.!?]\s+[A-Z]`)
+	
+	// Find all sentence boundaries
+	boundaries := re.FindAllStringIndex(text, -1)
+	
+	// If no boundaries found, return the whole text as one sentence
+	if len(boundaries) == 0 {
+		return []string{text}
+	}
+	
+	// Build sentences
+	var sentences []string
+	prevEnd := 0
+	
+	for _, boundary := range boundaries {
+		// End of sentence is position of the punctuation mark
+		endPos := boundary[0] + 1
+		sentences = append(sentences, text[prevEnd:endPos])
+		
+		// Start of next sentence is after the space
+		prevEnd = boundary[0] + 2
+	}
+	
+	// Add the last sentence if there's text left
+	if prevEnd < len(text) {
+		sentences = append(sentences, text[prevEnd:])
+	}
+	
+	return sentences
+}
+
+// isBitcoinPriceQuery checks if the query is asking about Bitcoin price
+func isBitcoinPriceQuery(query string) bool {
+    query = strings.ToLower(query)
+    return (strings.Contains(query, "bitcoin") || strings.Contains(query, "btc")) && 
+           (strings.Contains(query, "price") || 
+            strings.Contains(query, "worth") || 
+            strings.Contains(query, "value") || 
+            strings.Contains(query, "cost") ||
+            strings.Contains(query, "how much"))
+}
+
+// containsPriceMention checks if text contains a price reference
+func containsPriceMention(text string) bool {
+    text = strings.ToLower(text)
+    
+    // Check for price patterns
+    pricePatterns := []string{
+        "$", "usd", "dollar", "€", "₿", "btc", "price",
+        "k", "thousand", "million", "worth", "value",
+    }
+    
+    for _, pattern := range pricePatterns {
+        if strings.Contains(text, pattern) {
+            // Look for nearby numbers
+            re := regexp.MustCompile(`\d+(?:[,.]\d+)?`)
+            matches := re.FindAllString(text, -1)
+            if len(matches) > 0 {
+                return true
+            }
+        }
+    }
+    
+    return false
+}
+
+// isTimeSensitiveQuery checks if a query is asking for recent information
+func isTimeSensitiveQuery(query string) bool {
+    query = strings.ToLower(query)
+    timePatterns := []string{
+        "now", "today", "current", "latest", "recent", "live",
+        "right now", "at the moment", "as of now", "newest",
+    }
+    
+    for _, pattern := range timePatterns {
+        if strings.Contains(query, pattern) {
+            return true
+        }
+    }
+    
+    return false
 }
