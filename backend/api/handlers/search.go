@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pranesh-j/subplexity/tree/main/backend/internal/models"
-	"github.com/pranesh-j/subplexity/tree/main/backend/internal/services"
+	"github.com/pranesh-j/subplexity/internal/models"
+	"github.com/pranesh-j/subplexity/internal/services"
 )
 
 type SearchHandler struct {

@@ -225,86 +225,95 @@ func (s *AIService) processWithOpenAI(query, content string) (string, string, er
 }
 
 func (s *AIService) processWithGemini(query, content string) (string, string, error) {
-	if s.GoogleAPIKey == "" {
-		return "", "", fmt.Errorf("missing Google API key")
-	}
+    if s.GoogleAPIKey == "" {
+        return "", "", fmt.Errorf("missing Google API key")
+    }
 
-	type geminiPart struct {
-		Text string `json:"text"`
-	}
+    type geminiPart struct {
+        Text string `json:"text"`
+    }
 
-	type geminiContent struct {
-		Parts []geminiPart `json:"parts"`
-		Role  string       `json:"role"`
-	}
+    type geminiContent struct {
+        Parts []geminiPart `json:"parts"`
+        Role  string       `json:"role"`
+    }
 
-	type geminiRequest struct {
-		Contents    []geminiContent `json:"contents"`
-		Model       string          `json:"model"`
-		Temperature float64         `json:"temperature"`
-	}
+    type geminiRequest struct {
+        Contents []geminiContent `json:"contents"`
+        Model    string          `json:"model"`
+        GenerationConfig struct {
+            Temperature float64 `json:"temperature"`
+        } `json:"generationConfig"`
+    }
+    
+    // Create the prompt with instructions about analyzing Reddit results
+    promptText := "You are analyzing Reddit search results. First, provide your reasoning process about the data, then provide a comprehensive answer to the user's query based on the Reddit content.\n\n" + content
 
-	requestBody := geminiRequest{
-		Contents: []geminiContent{
-			{
-				Parts: []geminiPart{{Text: "You are analyzing Reddit search results. First, provide your reasoning process about the data, then provide a comprehensive answer to the user's query based on the Reddit content."}},
-				Role:  "system",
-			},
-			{
-				Parts: []geminiPart{{Text: content}},
-				Role:  "user",
-			},
-		},
-		Model:       "gemini-pro",
-		Temperature: 0.3,
-	}
+    // Initialize request with Gemini 2.0 Flash model
+    requestBody := geminiRequest{
+        Contents: []geminiContent{
+            {
+                Role: "user",
+                Parts: []geminiPart{
+                    {Text: promptText},
+                },
+            },
+        },
+        Model: "gemini-1.5-flash",
+        GenerationConfig: struct {
+            Temperature float64 `json:"temperature"`
+        }{
+            Temperature: 0.3,
+        },
+    }
 
-	jsonData, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", "", fmt.Errorf("error marshaling request: %w", err)
-	}
+    jsonData, err := json.Marshal(requestBody)
+    if err != nil {
+        return "", "", fmt.Errorf("error marshaling request: %w", err)
+    }
 
-	req, err := http.NewRequest("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key="+s.GoogleAPIKey, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", "", fmt.Errorf("error creating request: %w", err)
-	}
+    // Use the correct API endpoint for Gemini 2.0
+    req, err := http.NewRequest("POST", "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key="+s.GoogleAPIKey, bytes.NewBuffer(jsonData))
+    if err != nil {
+        return "", "", fmt.Errorf("error creating request: %w", err)
+    }
 
-	req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("error making request: %w", err)
-	}
-	defer resp.Body.Close()
+    resp, err := s.httpClient.Do(req)
+    if err != nil {
+        return "", "", fmt.Errorf("error making request: %w", err)
+    }
+    defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("error response from Google API: %s - %s", resp.Status, string(bodyBytes))
-	}
+    if resp.StatusCode != http.StatusOK {
+        bodyBytes, _ := io.ReadAll(resp.Body)
+        return "", "", fmt.Errorf("error response from Google API: %s - %s", resp.Status, string(bodyBytes))
+    }
 
-	var response struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
+    var response struct {
+        Candidates []struct {
+            Content struct {
+                Parts []struct {
+                    Text string `json:"text"`
+                } `json:"parts"`
+            } `json:"content"`
+        } `json:"candidates"`
+    }
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", "", fmt.Errorf("error decoding response: %w", err)
-	}
-	
-	if len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 {
-		return "", "", fmt.Errorf("no response content from Gemini API")
-	}
+    if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+        return "", "", fmt.Errorf("error decoding response: %w", err)
+    }
+    
+    if len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 {
+        return "", "", fmt.Errorf("no response content from Gemini API")
+    }
 
-	fullText := response.Candidates[0].Content.Parts[0].Text
-	reasoningEndIdx := len(fullText) / 2 
-	
-	reasoning := fullText[:reasoningEndIdx]
-	answer := fullText[reasoningEndIdx:]
+    fullText := response.Candidates[0].Content.Parts[0].Text
+    reasoningEndIdx := len(fullText) / 2 
+    
+    reasoning := fullText[:reasoningEndIdx]
+    answer := fullText[reasoningEndIdx:]
 
-	return reasoning, answer, nil
+    return reasoning, answer, nil
 }

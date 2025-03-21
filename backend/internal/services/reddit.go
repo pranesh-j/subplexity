@@ -3,12 +3,12 @@ package services
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
 
-	"github.com/pranesh-j/subplexity/tree/main/backend/internal/models"
+	"github.com/pranesh-j/subplexity/internal/models"
 )
 
 type RedditService struct {
@@ -72,7 +72,7 @@ func (s *RedditService) SearchReddit(query string, searchMode string, limit int)
 	}
 
 	// Read the entire response body
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("error reading response body: %w", err)
 	}
