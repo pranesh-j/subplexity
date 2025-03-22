@@ -38,7 +38,7 @@ func (h *SearchHandler) Init(ctx context.Context) error {
 }
 
 func (h *SearchHandler) HandleSearch(c *gin.Context) {
-	// Create a context with timeout for the entire request
+	// Create a context with timeout for the request
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 

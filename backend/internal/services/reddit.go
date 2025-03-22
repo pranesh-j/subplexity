@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"strings"
 	"time"
 
 	"github.com/pranesh-j/subplexity/internal/cache"
@@ -21,7 +22,8 @@ import (
 // Constants for the Reddit service
 const (
 	redditBaseURL        = "https://www.reddit.com"
-	redditUserAgent      = "Subplexity/1.0 (golang application; +https://github.com/pranesh-j/subplexity)"
+	// UPDATE THIS USER AGENT STRING
+	redditUserAgent      = "golang:com.subplexity.api:v1.0.0 (by /u/Pran_J)"
 	defaultRequestLimit  = 25
 	maxRequestLimit      = 100
 	maxConcurrentQueries = 5
@@ -83,6 +85,11 @@ func NewRedditService(clientID, clientSecret string) *RedditService {
 		rateLimiter:  make(chan struct{}, maxConcurrentQueries),
 		httpClient:   httpClient,
 	}
+}
+
+// GetAuthStatus returns the current authentication status
+func (s *RedditService) GetAuthStatus() map[string]interface{} {
+	return s.auth.GetAuthStatus()
 }
 
 // SearchReddit performs a search on Reddit based on the provided query and search mode
@@ -457,6 +464,15 @@ func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint strin
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
+	// Log request details for debugging
+	log.Printf("Making Reddit API request to: %s", endpoint)
+
+	// Verify headers are set
+	if req.Header.Get("User-Agent") == "" {
+		log.Printf("Warning: User-Agent header is empty, this will cause 403 errors")
+		req.Header.Set("User-Agent", redditUserAgent) // Fallback
+	}
+
 	// Execute request with retries
 	var resp *http.Response
 	var retryDelay time.Duration = initialRetryDelay
@@ -502,9 +518,18 @@ func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint strin
 
 		// Check for HTTP error status
 		if resp.StatusCode != http.StatusOK {
+			// Read error body for better diagnostics
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			errorDetails := string(bodyBytes)
+			
+			// Log detailed error info
+			log.Printf("Reddit API error (%d): %s", resp.StatusCode, errorDetails)
+			log.Printf("Request URL: %s", endpoint)
+			log.Printf("User-Agent: %s", req.Header.Get("User-Agent"))
+			log.Printf("Has Auth Token: %v", token != "")
+			
 			resp.Body.Close()
 			
-			// Special handling for auth errors
 			if resp.StatusCode == http.StatusUnauthorized {
 				// Clear invalid token
 				s.auth.Clear()
@@ -520,6 +545,16 @@ func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint strin
 				}
 				
 				retryDelay = initialRetryDelay // Reset delay for auth retry
+				continue
+			}
+			
+			if resp.StatusCode == http.StatusForbidden {
+				if attempt == maxRetries {
+					return nil, fmt.Errorf("access forbidden (403): %s", errorDetails)
+				}
+				
+				// For 403, ensure User-Agent is set and try again
+				req.Header.Set("User-Agent", s.config.UserAgent)
 				continue
 			}
 			
@@ -542,7 +577,7 @@ func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint strin
 			}
 			
 			if attempt == maxRetries {
-				return nil, fmt.Errorf("HTTP error: %d", resp.StatusCode)
+				return nil, fmt.Errorf("HTTP error: %d - %s", resp.StatusCode, errorDetails)
 			}
 			
 			// Exponential backoff for next retry

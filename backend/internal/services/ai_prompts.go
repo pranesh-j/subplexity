@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/pranesh-j/subplexity/internal/models"
 )
 
 // loadPromptTemplates returns the templates for AI prompts

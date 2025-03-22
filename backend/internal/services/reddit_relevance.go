@@ -12,6 +12,12 @@ import (
 	"github.com/pranesh-j/subplexity/internal/utils"
 )
 
+// Define scoredResult type for use in relevance ranking
+type scoredResult struct {
+	result models.SearchResult
+	score  float64
+}
+
 // processSearchResults processes and ranks search results
 func (s *RedditService) processSearchResults(params utils.QueryParams, results []models.SearchResult, limit int) []models.SearchResult {
 	if len(results) == 0 {
@@ -19,11 +25,6 @@ func (s *RedditService) processSearchResults(params utils.QueryParams, results [
 	}
 	
 	// Score results based on relevance to query
-	type scoredResult struct {
-		result models.SearchResult
-		score  float64
-	}
-	
 	var scoredResults []scoredResult
 	
 	// Process each result
