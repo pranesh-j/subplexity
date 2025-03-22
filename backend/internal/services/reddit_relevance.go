@@ -18,6 +18,162 @@ type scoredResult struct {
 	score  float64
 }
 
+// extractHighlights extracts key excerpts from content that match keywords
+func extractHighlights(content string, keywords []string) []string {
+	if content == "" || len(keywords) == 0 {
+		return nil
+	}
+	
+	// Split content into sentences
+	sentences := splitIntoSentences(content)
+	if len(sentences) == 0 {
+		return nil
+	}
+	
+	// Score each sentence based on keyword matches
+	type scoredSentence struct {
+		text  string
+		score int
+	}
+	
+	var scoredSentences []scoredSentence
+	
+	for _, sentence := range sentences {
+		if len(strings.TrimSpace(sentence)) < 10 {
+			continue // Skip very short sentences
+		}
+		
+		score := 0
+		lowerSentence := strings.ToLower(sentence)
+		
+		for _, keyword := range keywords {
+			if len(keyword) > 2 && strings.Contains(lowerSentence, strings.ToLower(keyword)) {
+				score += 1
+				
+				// Bonus for containing multiple keywords
+				if strings.Count(lowerSentence, strings.ToLower(keyword)) > 1 {
+					score += 1
+				}
+			}
+		}
+		
+		// Only consider sentences with at least one keyword match
+		if score > 0 {
+			scoredSentences = append(scoredSentences, scoredSentence{
+				text:  sentence,
+				score: score,
+			})
+		}
+	}
+	
+	// Sort sentences by score (highest first)
+	sort.Slice(scoredSentences, func(i, j int) bool {
+		return scoredSentences[i].score > scoredSentences[j].score
+	})
+	
+	// Take up to 3 highest scoring sentences as highlights
+	maxHighlights := 3
+	if len(scoredSentences) < maxHighlights {
+		maxHighlights = len(scoredSentences)
+	}
+	
+	highlights := make([]string, 0, maxHighlights)
+	
+	for i := 0; i < maxHighlights; i++ {
+		highlight := strings.TrimSpace(scoredSentences[i].text)
+		
+		// Truncate if too long
+		const maxHighlightLength = 200
+		if len(highlight) > maxHighlightLength {
+			// Find a good breakpoint
+			breakPoint := maxHighlightLength
+			for j := maxHighlightLength - 1; j >= maxHighlightLength-30; j-- {
+				if j < len(highlight) && (highlight[j] == ' ' || highlight[j] == ',' || highlight[j] == '.') {
+					breakPoint = j
+					break
+				}
+			}
+			highlight = highlight[:breakPoint] + "..."
+		}
+		
+		highlights = append(highlights, highlight)
+	}
+	
+	return highlights
+}
+
+// splitIntoSentences breaks text into sentences
+func splitIntoSentences(text string) []string {
+	// Common abbreviations to handle specially
+	abbreviations := []string{
+		"Mr.", "Mrs.", "Ms.", "Dr.", "Prof.",
+		"Inc.", "Ltd.", "Co.", "Corp.",
+		"vs.", "etc.", "i.e.", "e.g.",
+		"U.S.", "U.K.", "E.U.",
+		"Jan.", "Feb.", "Aug.", "Sept.", "Oct.", "Nov.", "Dec.",
+	}
+	
+	// Replace periods in abbreviations temporarily
+	for _, abbr := range abbreviations {
+		text = strings.ReplaceAll(text, abbr, strings.ReplaceAll(abbr, ".", "##PD##"))
+	}
+	
+	// Use regex-free approach for better performance
+	var sentences []string
+	var currentSentence strings.Builder
+	
+	for i := 0; i < len(text); i++ {
+		currentSentence.WriteByte(text[i])
+		
+		// Check for sentence-ending punctuation
+		if text[i] == '.' || text[i] == '!' || text[i] == '?' {
+			// Look ahead to see if this is really the end of a sentence
+			isEndOfSentence := false
+			
+			// Check if we're at the end of text
+			if i == len(text)-1 {
+				isEndOfSentence = true
+			} else {
+				// Check if followed by space and capital letter
+				for j := i + 1; j < len(text); j++ {
+					if text[j] == ' ' || text[j] == '\t' || text[j] == '\n' {
+						continue
+					}
+					
+					// If next non-whitespace char is capital, it's a new sentence
+					if j < len(text) && text[j] >= 'A' && text[j] <= 'Z' {
+						isEndOfSentence = true
+					}
+					
+					break
+				}
+				
+				// Also end sentence if followed by multiple newlines
+				if i+2 < len(text) && text[i+1] == '\n' && text[i+2] == '\n' {
+					isEndOfSentence = true
+				}
+			}
+			
+			if isEndOfSentence {
+				sentences = append(sentences, currentSentence.String())
+				currentSentence.Reset()
+			}
+		}
+	}
+	
+	// Add any remaining content as the last sentence
+	if currentSentence.Len() > 0 {
+		sentences = append(sentences, currentSentence.String())
+	}
+	
+	// Restore periods in abbreviations
+	for i := range sentences {
+		sentences[i] = strings.ReplaceAll(sentences[i], "##PD##", ".")
+	}
+	
+	return sentences
+}
+
 // processSearchResults processes and ranks search results
 func (s *RedditService) processSearchResults(params utils.QueryParams, results []models.SearchResult, limit int) []models.SearchResult {
 	if len(results) == 0 {
@@ -231,24 +387,35 @@ func calculateRelevanceScore(result models.SearchResult, params utils.QueryParam
 	return score
 }
 
-// Add this helper function to extract main identifying keywords
+// Extract main identifying keywords from the query
 func extractMainKeywords(query string) []string {
 	query = strings.ToLower(query)
 	words := strings.Fields(query)
 	var keywords []string
 	
-	// Look for specific patterns
-	showKeywords := []string{"severance", "s2", "season", "episode", "ep", "review"}
-	
+	// Filter out common stop words and keep meaningful terms
 	for _, word := range words {
-		for _, keyword := range showKeywords {
-			if strings.Contains(word, keyword) {
-				keywords = append(keywords, keyword)
+		// Only keep words with 3+ characters as significant keywords
+		if len(word) > 2 {
+			// Skip common words that don't add much meaning
+			if !isStopWord(word) {
+				keywords = append(keywords, word)
 			}
 		}
 	}
 	
 	return keywords
+}
+
+// Helper to identify common stop words
+func isStopWord(word string) bool {
+	stopWords := map[string]bool{
+		"the": true, "and": true, "for": true, "are": true, "but": true,
+		"not": true, "you": true, "all": true, "any": true, "can": true,
+		"had": true, "has": true, "may": true, "was": true, "who": true,
+		"why": true, "will": true, "with": true, "from": true,
+	}
+	return stopWords[word]
 }
 
 // countOccurrences counts how many times a keyword appears in text
@@ -342,160 +509,4 @@ func diversifyResults(scoredResults []scoredResult) []scoredResult {
 	}
 	
 	return diversified
-}
-
-// extractHighlights extracts key excerpts from content that match keywords
-func extractHighlights(content string, keywords []string) []string {
-	if content == "" || len(keywords) == 0 {
-		return nil
-	}
-	
-	// Split content into sentences
-	sentences := splitIntoSentences(content)
-	if len(sentences) == 0 {
-		return nil
-	}
-	
-	// Score each sentence based on keyword matches
-	type scoredSentence struct {
-		text  string
-		score int
-	}
-	
-	var scoredSentences []scoredSentence
-	
-	for _, sentence := range sentences {
-		if len(strings.TrimSpace(sentence)) < 10 {
-			continue // Skip very short sentences
-		}
-		
-		score := 0
-		lowerSentence := strings.ToLower(sentence)
-		
-		for _, keyword := range keywords {
-			if len(keyword) > 2 && strings.Contains(lowerSentence, strings.ToLower(keyword)) {
-				score += 1
-				
-				// Bonus for containing multiple keywords
-				if strings.Count(lowerSentence, strings.ToLower(keyword)) > 1 {
-					score += 1
-				}
-			}
-		}
-		
-		// Only consider sentences with at least one keyword match
-		if score > 0 {
-			scoredSentences = append(scoredSentences, scoredSentence{
-				text:  sentence,
-				score: score,
-			})
-		}
-	}
-	
-	// Sort sentences by score (highest first)
-	sort.Slice(scoredSentences, func(i, j int) bool {
-		return scoredSentences[i].score > scoredSentences[j].score
-	})
-	
-	// Take up to 3 highest scoring sentences as highlights
-	maxHighlights := 3
-	if len(scoredSentences) < maxHighlights {
-		maxHighlights = len(scoredSentences)
-	}
-	
-	highlights := make([]string, 0, maxHighlights)
-	
-	for i := 0; i < maxHighlights; i++ {
-		highlight := strings.TrimSpace(scoredSentences[i].text)
-		
-		// Truncate if too long
-		const maxHighlightLength = 200
-		if len(highlight) > maxHighlightLength {
-			// Find a good breakpoint
-			breakPoint := maxHighlightLength
-			for j := maxHighlightLength - 1; j >= maxHighlightLength-30; j-- {
-				if j < len(highlight) && (highlight[j] == ' ' || highlight[j] == ',' || highlight[j] == '.') {
-					breakPoint = j
-					break
-				}
-			}
-			highlight = highlight[:breakPoint] + "..."
-		}
-		
-		highlights = append(highlights, highlight)
-	}
-	
-	return highlights
-}
-
-// splitIntoSentences breaks text into sentences
-func splitIntoSentences(text string) []string {
-	// Common abbreviations to handle specially
-	abbreviations := []string{
-		"Mr.", "Mrs.", "Ms.", "Dr.", "Prof.",
-		"Inc.", "Ltd.", "Co.", "Corp.",
-		"vs.", "etc.", "i.e.", "e.g.",
-		"U.S.", "U.K.", "E.U.",
-		"Jan.", "Feb.", "Aug.", "Sept.", "Oct.", "Nov.", "Dec.",
-	}
-	
-	// Replace periods in abbreviations temporarily
-	for _, abbr := range abbreviations {
-		text = strings.ReplaceAll(text, abbr, strings.ReplaceAll(abbr, ".", "##PD##"))
-	}
-	
-	// Use regex-free approach for better performance
-	var sentences []string
-	var currentSentence strings.Builder
-	
-	for i := 0; i < len(text); i++ {
-		currentSentence.WriteByte(text[i])
-		
-		// Check for sentence-ending punctuation
-		if text[i] == '.' || text[i] == '!' || text[i] == '?' {
-			// Look ahead to see if this is really the end of a sentence
-			isEndOfSentence := false
-			
-			// Check if we're at the end of text
-			if i == len(text)-1 {
-				isEndOfSentence = true
-			} else {
-				// Check if followed by space and capital letter
-				for j := i + 1; j < len(text); j++ {
-					if text[j] == ' ' || text[j] == '\t' || text[j] == '\n' {
-						continue
-					}
-					
-					// If next non-whitespace char is capital, it's a new sentence
-					if j < len(text) && text[j] >= 'A' && text[j] <= 'Z' {
-						isEndOfSentence = true
-					}
-					
-					break
-				}
-				
-				// Also end sentence if followed by multiple newlines
-				if i+2 < len(text) && text[i+1] == '\n' && text[i+2] == '\n' {
-					isEndOfSentence = true
-				}
-			}
-			
-			if isEndOfSentence {
-				sentences = append(sentences, currentSentence.String())
-				currentSentence.Reset()
-			}
-		}
-	}
-	
-	// Add any remaining content as the last sentence
-	if currentSentence.Len() > 0 {
-		sentences = append(sentences, currentSentence.String())
-	}
-	
-	// Restore periods in abbreviations
-	for i := range sentences {
-		sentences[i] = strings.ReplaceAll(sentences[i], "##PD##", ".")
-	}
-	
-	return sentences
 }

@@ -134,16 +134,6 @@ export function SearchInterface() {
     }
   }
 
-  // Helper function to check if a result is relevant
-  const isResultRelevant = (result: any) => {
-    const queryTerms = query.toLowerCase().split(/\s+/);
-    const resultText = (result.title + " " + result.content).toLowerCase();
-    
-    // Check if any important query terms are in the result
-    const importantTerms = ["severance", "s2", "season", "episode", "ep", "review"];
-    return importantTerms.some(term => resultText.includes(term));
-  }
-
   return (
     <div className="space-y-4">
       <div className="relative">
@@ -240,20 +230,12 @@ export function SearchInterface() {
         </div>
       )}
 
-      {/* Show search results - filtering out irrelevant ones */}
+      {/* Show search results */}
       {searchResults?.results && searchResults.results.length > 0 && (
         <div className="mt-8">
           <h2 className="text-xl font-bold mb-4">Search Results</h2>
           <div className="space-y-4">
             {searchResults.results
-              .filter(result => {
-                // Only show results that contain the main query terms
-                const resultText = (result.title + " " + result.content).toLowerCase();
-                
-                // Check if any important query terms are in the result
-                const importantTerms = ["severance", "s2", "season", "episode", "ep", "review"];
-                return importantTerms.some(term => resultText.includes(term));
-              })
               .map((result) => (
                 <div 
                   key={result.id} 

@@ -112,32 +112,41 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 		return
 	}
 
-	// Filter out irrelevant results
+	// Filter out completely irrelevant results based on the query terms
 	var relevantResults []models.SearchResult
-	for _, result := range results {
-		// Check if title or content contains any of the main query terms
-		isRelevant := false
-		resultText := strings.ToLower(result.Title + " " + result.Content)
-		
-		// Check for key terms that must be present
-		requiredTerms := []string{"severance", "s2", "season", "episode", "ep", "review"}
-		
-		for _, term := range requiredTerms {
-			if strings.Contains(resultText, term) {
-				isRelevant = true
-				break
-			}
-		}
-		
-		if isRelevant {
-			relevantResults = append(relevantResults, result)
+	
+	// Extract main keywords from the query
+	queryWords := strings.Fields(strings.ToLower(req.Query))
+	
+	// Filter out common stop words
+	var queryKeywords []string
+	for _, word := range queryWords {
+		// Only keep meaningful words (longer than 2 chars)
+		if len(word) > 2 {
+			queryKeywords = append(queryKeywords, word)
 		}
 	}
 	
-	// Only use relevant results if we found any
-	if len(relevantResults) > 0 {
-		log.Printf("Filtered results from %d to %d relevant items", len(results), len(relevantResults))
-		results = relevantResults
+	// Only perform filtering if we have meaningful keywords
+	if len(queryKeywords) > 0 {
+		for _, result := range results {
+			resultText := strings.ToLower(result.Title + " " + result.Content)
+			
+			// Check if any main query terms are present
+			for _, term := range queryKeywords {
+				if strings.Contains(resultText, term) {
+					relevantResults = append(relevantResults, result)
+					break
+				}
+			}
+		}
+		
+		// Only use filtered results if we found some
+		if len(relevantResults) > 0 {
+			log.Printf("Filtered results from %d to %d relevant items based on query keywords", 
+				len(results), len(relevantResults))
+			results = relevantResults
+		}
 	}
 
 	// Process results with AI (with error handling)
