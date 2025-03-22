@@ -134,6 +134,16 @@ export function SearchInterface() {
     }
   }
 
+  // Helper function to check if a result is relevant
+  const isResultRelevant = (result: any) => {
+    const queryTerms = query.toLowerCase().split(/\s+/);
+    const resultText = (result.title + " " + result.content).toLowerCase();
+    
+    // Check if any important query terms are in the result
+    const importantTerms = ["severance", "s2", "season", "episode", "ep", "review"];
+    return importantTerms.some(term => resultText.includes(term));
+  }
+
   return (
     <div className="space-y-4">
       <div className="relative">
@@ -230,59 +240,68 @@ export function SearchInterface() {
         </div>
       )}
 
-      {/* Show search results */}
+      {/* Show search results - filtering out irrelevant ones */}
       {searchResults?.results && searchResults.results.length > 0 && (
         <div className="mt-8">
           <h2 className="text-xl font-bold mb-4">Search Results</h2>
           <div className="space-y-4">
-            {searchResults.results.map((result) => (
-              <div 
-                key={result.id} 
-                className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="bg-[#FF4500]/10 text-[#FF4500] rounded-full p-2 flex-shrink-0">
-                    {result.type === "post" && <Code className="h-4 w-4" />}
-                    {result.type === "comment" && <Image className="h-4 w-4" />}
-                    {result.type === "subreddit" && <Video className="h-4 w-4" />}
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-lg font-medium">
-                      <a 
-                        href={result.url} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="hover:text-[#FF4500] transition-colors"
-                      >
-                        {result.title}
-                      </a>
-                    </h3>
-                    <div className="flex items-center gap-2 text-sm text-zinc-400 mt-1">
-                      <span>r/{result.subreddit}</span>
-                      <span>•</span>
-                      <span>u/{result.author}</span>
-                      <span>•</span>
-                      <span>{new Date(result.createdUtc * 1000).toLocaleDateString()}</span>
+            {searchResults.results
+              .filter(result => {
+                // Only show results that contain the main query terms
+                const resultText = (result.title + " " + result.content).toLowerCase();
+                
+                // Check if any important query terms are in the result
+                const importantTerms = ["severance", "s2", "season", "episode", "ep", "review"];
+                return importantTerms.some(term => resultText.includes(term));
+              })
+              .map((result) => (
+                <div 
+                  key={result.id} 
+                  className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="bg-[#FF4500]/10 text-[#FF4500] rounded-full p-2 flex-shrink-0">
+                      {result.type === "post" && <Code className="h-4 w-4" />}
+                      {result.type === "comment" && <Image className="h-4 w-4" />}
+                      {result.type === "subreddit" && <Video className="h-4 w-4" />}
                     </div>
-                    {result.content && (
-                      <p className="mt-3 text-zinc-300 line-clamp-3">
-                        {result.content}
-                      </p>
-                    )}
-                    <div className="flex items-center gap-4 mt-3 text-sm">
-                      <span className="text-zinc-400">
-                        {result.score} points
-                      </span>
-                      {result.commentCount !== undefined && (
-                        <span className="text-zinc-400">
-                          {result.commentCount} comments
-                        </span>
+                    <div className="flex-1">
+                      <h3 className="text-lg font-medium">
+                        <a 
+                          href={result.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="hover:text-[#FF4500] transition-colors"
+                        >
+                          {result.title}
+                        </a>
+                      </h3>
+                      <div className="flex items-center gap-2 text-sm text-zinc-400 mt-1">
+                        <span>r/{result.subreddit}</span>
+                        <span>•</span>
+                        <span>u/{result.author}</span>
+                        <span>•</span>
+                        <span>{new Date(result.createdUtc * 1000).toLocaleDateString()}</span>
+                      </div>
+                      {result.content && (
+                        <p className="mt-3 text-zinc-300 line-clamp-3">
+                          {result.content}
+                        </p>
                       )}
+                      <div className="flex items-center gap-4 mt-3 text-sm">
+                        <span className="text-zinc-400">
+                          {result.score} points
+                        </span>
+                        {result.commentCount !== undefined && (
+                          <span className="text-zinc-400">
+                            {result.commentCount} comments
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         </div>
       )}

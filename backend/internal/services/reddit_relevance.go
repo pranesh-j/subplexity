@@ -80,6 +80,28 @@ func calculateRelevanceScore(result models.SearchResult, params utils.QueryParam
 		score = 70.0 // Default for unknown types
 	}
 	
+	// Check if this is completely unrelated content
+	isRelevant := false
+	
+	// Extract main keywords from query
+	mainKeywords := extractMainKeywords(params.OriginalQuery)
+	
+	// Check if title contains any main keywords
+	titleLower := strings.ToLower(result.Title)
+	contentLower := strings.ToLower(result.Content)
+	
+	for _, keyword := range mainKeywords {
+		if strings.Contains(titleLower, keyword) || strings.Contains(contentLower, keyword) {
+			isRelevant = true
+			score += 50.0
+		}
+	}
+	
+	// If no main keywords are found, severely penalize the score
+	if !isRelevant {
+		score -= 500.0
+	}
+	
 	// Adjust based on query intent and result type match
 	switch params.Intent {
 	case utils.SubredditIntent:
@@ -209,6 +231,26 @@ func calculateRelevanceScore(result models.SearchResult, params utils.QueryParam
 	return score
 }
 
+// Add this helper function to extract main identifying keywords
+func extractMainKeywords(query string) []string {
+	query = strings.ToLower(query)
+	words := strings.Fields(query)
+	var keywords []string
+	
+	// Look for specific patterns
+	showKeywords := []string{"severance", "s2", "season", "episode", "ep", "review"}
+	
+	for _, word := range words {
+		for _, keyword := range showKeywords {
+			if strings.Contains(word, keyword) {
+				keywords = append(keywords, keyword)
+			}
+		}
+	}
+	
+	return keywords
+}
+
 // countOccurrences counts how many times a keyword appears in text
 func countOccurrences(text, keyword string) int {
 	if keyword == "" {
@@ -227,13 +269,26 @@ func diversifyResults(scoredResults []scoredResult) []scoredResult {
 		return scoredResults
 	}
 	
+	// Filter out results with negative scores (irrelevant)
+	var filteredResults []scoredResult
+	for _, result := range scoredResults {
+		if result.score > 0 {
+			filteredResults = append(filteredResults, result)
+		}
+	}
+	
+	// If we filtered everything, use original list
+	if len(filteredResults) == 0 {
+		filteredResults = scoredResults
+	}
+	
 	// Initialize with top result
 	var diversified []scoredResult
-	diversified = append(diversified, scoredResults[0])
+	diversified = append(diversified, filteredResults[0])
 	
 	// Track types we've added and how many of each
 	typeCounts := map[string]int{
-		scoredResults[0].result.Type: 1,
+		filteredResults[0].result.Type: 1,
 	}
 	
 	// Add one of each type first (if available and in top half)
@@ -243,15 +298,15 @@ func diversifyResults(scoredResults []scoredResult) []scoredResult {
 		}
 		
 		// Find highest scoring result of this type within top half
-		topHalfCutoff := len(scoredResults) / 2
-		for i, sr := range scoredResults[1:topHalfCutoff] {
+		topHalfCutoff := len(filteredResults) / 2
+		for i, sr := range filteredResults[1:topHalfCutoff] {
 			if sr.result.Type == typ {
 				diversified = append(diversified, sr)
 				typeCounts[typ]++
 				
 				// Remove it from original slice to avoid duplicates
-				copy(scoredResults[i+1:], scoredResults[i+2:])
-				scoredResults = scoredResults[:len(scoredResults)-1]
+				copy(filteredResults[i+1:], filteredResults[i+2:])
+				filteredResults = filteredResults[:len(filteredResults)-1]
 				
 				break
 			}
@@ -259,10 +314,10 @@ func diversifyResults(scoredResults []scoredResult) []scoredResult {
 	}
 	
 	// Ensure we don't oversample any type (max 60% of results)
-	maxPerType := int(math.Ceil(float64(len(scoredResults)) * 0.6))
+	maxPerType := int(math.Ceil(float64(len(filteredResults)) * 0.6))
 	
 	// Fill remaining slots with highest scores, but with type diversity
-	for _, sr := range scoredResults {
+	for _, sr := range filteredResults {
 		// Skip results we've already added
 		alreadyAdded := false
 		for _, added := range diversified {

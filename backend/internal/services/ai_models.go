@@ -30,9 +30,9 @@ func loadModelConfigurations() map[string]*AIModelConfig {
 			Name:               "Claude",
 			Provider:           "Anthropic",
 			PromptTemplate:     "claude",
-			MaxTokens:          4000,
-			MaxResultsInPrompt: 12,
-			MaxContentLength:   1500,
+			MaxTokens:          2000,  // Reduced from 4000
+			MaxResultsInPrompt: 8,     // Reduced from 12
+			MaxContentLength:   800,   // Reduced from 1500
 			Temperature:        0.7,
 			SectionMarkers: map[string]string{
 				"reasoning_start": "BEGIN_REASONING",
@@ -52,9 +52,9 @@ func loadModelConfigurations() map[string]*AIModelConfig {
 			Name:               "DeepSeek R1",
 			Provider:           "DeepSeek",
 			PromptTemplate:     "deepseek",
-			MaxTokens:          4000,
-			MaxResultsInPrompt: 10,
-			MaxContentLength:   1000,
+			MaxTokens:          2000,
+			MaxResultsInPrompt: 5,
+			MaxContentLength:   800,
 			Temperature:        0.7,
 			SectionMarkers: map[string]string{
 				"reasoning_start": "BEGIN_REASONING",
@@ -74,9 +74,9 @@ func loadModelConfigurations() map[string]*AIModelConfig {
 			Name:               "Google Gemini",
 			Provider:           "Google",
 			PromptTemplate:     "gemini",
-			MaxTokens:          4000,
-			MaxResultsInPrompt: 12,
-			MaxContentLength:   1200,
+			MaxTokens:          2000,
+			MaxResultsInPrompt: 5,
+			MaxContentLength:   800,
 			Temperature:        0.7,
 			SectionMarkers: map[string]string{
 				"reasoning_start": "BEGIN_REASONING",
@@ -99,9 +99,9 @@ func loadModelConfigurations() map[string]*AIModelConfig {
 		Name:               "Default",
 		Provider:           "Anthropic",
 		PromptTemplate:     "default",
-		MaxTokens:          2000,
-		MaxResultsInPrompt: 8,
-		MaxContentLength:   800,
+		MaxTokens:          1500,
+		MaxResultsInPrompt: 5,
+		MaxContentLength:   500,
 		Temperature:        0.7,
 		SectionMarkers: map[string]string{
 			"reasoning_start": "BEGIN_REASONING",

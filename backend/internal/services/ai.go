@@ -338,200 +338,205 @@ func (s *AIService) processWithModel(ctx context.Context, prompt string, modelCo
 	}
 }
 
-// callAnthropicAPI makes API calls to Anthropic Claude
+// Fix the callAnthropicAPI function
 func (s *AIService) callAnthropicAPI(ctx context.Context, prompt string, modelConfig *AIModelConfig) (string, error) {
-	// Get API configuration from environment
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		log.Println("Warning: ANTHROPIC_API_KEY not set, using mock response")
-		return s.generateMockResponse(prompt), nil
-	}
-	
-	// Prepare request
-	type anthropicMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	
-	type anthropicRequest struct {
-		Model       string             `json:"model"`
-		Messages    []anthropicMessage `json:"messages"`
-		MaxTokens   int                `json:"max_tokens"`
-		Temperature float32            `json:"temperature"`
-	}
-	
-	// Determine model name based on configuration
-	modelName := "claude-3-opus-20240229" // Default model
-	if modelConfig.Name == "Claude" {
-		modelName = "claude-3-opus-20240229"
-	}
-	
-	request := anthropicRequest{
-		Model: modelName,
-		Messages: []anthropicMessage{
-			{Role: "user", Content: prompt},
-		},
-		MaxTokens:   modelConfig.MaxTokens,
-		Temperature: modelConfig.Temperature,
-	}
-	
-	// Marshal request to JSON
-	requestBody, err := json.Marshal(request)
-	if err != nil {
-		return "", fmt.Errorf("error marshaling request: %w", err)
-	}
-	
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(requestBody))
-	if err != nil {
-		return "", fmt.Errorf("error creating request: %w", err)
-	}
-	
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	
-	// Make the request
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("error making request to Anthropic API: %w", err)
-	}
-	defer resp.Body.Close()
-	
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("error response from Anthropic API (status %d): %s", resp.StatusCode, string(bodyBytes))
-	}
-	
-	// Parse response
-	var response struct {
-		Content []struct {
-			Type  string `json:"type"`
-			Text  string `json:"text"`
-		} `json:"content"`
-	}
-	
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("error parsing Anthropic API response: %w", err)
-	}
-	
-	// Extract text from response
-	var resultText string
-	for _, content := range response.Content {
-		if content.Type == "text" {
-			resultText += content.Text
-		}
-	}
-	
-	if resultText == "" {
-		return "", errors.New("empty response from Anthropic API")
-	}
-	
-	return resultText, nil
+    // Get API configuration from environment
+    apiKey := os.Getenv("ANTHROPIC_API_KEY")
+    if apiKey == "" {
+        log.Println("Warning: ANTHROPIC_API_KEY not set, using mock response")
+        return s.generateMockResponse(prompt), nil
+    }
+    
+    // Prepare request
+    type anthropicMessage struct {
+        Role    string `json:"role"`
+        Content string `json:"content"`
+    }
+    
+    type anthropicRequest struct {
+        Model       string             `json:"model"`
+        Messages    []anthropicMessage `json:"messages"`
+        MaxTokens   int                `json:"max_tokens"`
+        Temperature float32            `json:"temperature"`
+    }
+    
+    // Determine model name based on configuration
+    modelName := "claude-3-opus-20240229" // Default model
+    if modelConfig.Name == "Claude" {
+        modelName = "claude-3-opus-20240229"
+    }
+    
+    request := anthropicRequest{
+        Model: modelName,
+        Messages: []anthropicMessage{
+            {Role: "user", Content: prompt},
+        },
+        MaxTokens:   modelConfig.MaxTokens,
+        Temperature: modelConfig.Temperature,
+    }
+    
+    // Marshal request to JSON
+    requestBody, err := json.Marshal(request)
+    if err != nil {
+        return "", fmt.Errorf("error marshaling request: %w", err)
+    }
+    
+    // Create HTTP request with updated timeout
+    client := &http.Client{Timeout: 50 * time.Second} // Increase timeout
+    
+    req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(requestBody))
+    if err != nil {
+        return "", fmt.Errorf("error creating request: %w", err)
+    }
+    
+    // Set headers
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("x-api-key", apiKey)
+    req.Header.Set("anthropic-version", "2023-06-01")
+    
+    // Make the request
+    resp, err := client.Do(req)
+    if err != nil {
+        return "", fmt.Errorf("error making request to Anthropic API: %w", err)
+    }
+    defer resp.Body.Close()
+    
+    // Check response status
+    if resp.StatusCode != http.StatusOK {
+        bodyBytes, _ := io.ReadAll(resp.Body)
+        return "", fmt.Errorf("error response from Anthropic API (status %d): %s", resp.StatusCode, string(bodyBytes))
+    }
+    
+    // Parse response
+    var response struct {
+        Content []struct {
+            Type  string `json:"type"`
+            Text  string `json:"text"`
+        } `json:"content"`
+    }
+    
+    if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+        return "", fmt.Errorf("error parsing Anthropic API response: %w", err)
+    }
+    
+    // Extract text from response
+    var resultText string
+    for _, content := range response.Content {
+        if content.Type == "text" {
+            resultText += content.Text
+        }
+    }
+    
+    if resultText == "" {
+        return "", errors.New("empty response from Anthropic API")
+    }
+    
+    return resultText, nil
 }
 
-// callGoogleAPI makes API calls to Google's Gemini models
+// Also fix the callGoogleAPI function
 func (s *AIService) callGoogleAPI(ctx context.Context, prompt string, modelConfig *AIModelConfig) (string, error) {
-	// Get API configuration from environment
-	apiKey := os.Getenv("GOOGLE_API_KEY")
-	if apiKey == "" {
-		log.Println("Warning: GOOGLE_API_KEY not set, using mock response")
-		return s.generateMockResponse(prompt), nil
-	}
-	
-	// Prepare request
-	type googleContent struct {
-		Parts []struct {
-			Text string `json:"text"`
-		} `json:"parts"`
-	}
-	
-	type googleRequest struct {
-		Contents    []googleContent `json:"contents"`
-		Model       string          `json:"model"`
-		Temperature float32         `json:"temperature"`
-		MaxTokens   int             `json:"maxOutputTokens"`
-	}
-	
-	// Determine model name based on configuration
-	modelName := "gemini-1.5-pro" // Default model
-	
-	request := googleRequest{
-		Contents: []googleContent{
-			{
-				Parts: []struct {
-					Text string `json:"text"`
-				}{
-					{Text: prompt},
-				},
-			},
-		},
-		Model:       modelName,
-		Temperature: modelConfig.Temperature,
-		MaxTokens:   modelConfig.MaxTokens,
-	}
-	
-	// Marshal request to JSON
-	requestBody, err := json.Marshal(request)
-	if err != nil {
-		return "", fmt.Errorf("error marshaling request: %w", err)
-	}
-	
-	// Create HTTP request
-	apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", modelName, apiKey)
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(requestBody))
-	if err != nil {
-		return "", fmt.Errorf("error creating request: %w", err)
-	}
-	
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	
-	// Make the request
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("error making request to Google API: %w", err)
-	}
-	defer resp.Body.Close()
-	
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("error response from Google API (status %d): %s", resp.StatusCode, string(bodyBytes))
-	}
-	
-	// Parse response
-	var response struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-	
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("error parsing Google API response: %w", err)
-	}
-	
-	// Extract text from response
-	var resultText string
-	if len(response.Candidates) > 0 && len(response.Candidates[0].Content.Parts) > 0 {
-		for _, part := range response.Candidates[0].Content.Parts {
-			resultText += part.Text
-		}
-	}
-	
-	if resultText == "" {
-		return "", errors.New("empty response from Google API")
-	}
-	
-	return resultText, nil
+    // Get API configuration from environment
+    apiKey := os.Getenv("GOOGLE_API_KEY")
+    if apiKey == "" {
+        log.Println("Warning: GOOGLE_API_KEY not set, using mock response")
+        return s.generateMockResponse(prompt), nil
+    }
+    
+    // Prepare request
+    type googleContent struct {
+        Parts []struct {
+            Text string `json:"text"`
+        } `json:"parts"`
+    }
+    
+    type googleRequest struct {
+        Contents    []googleContent `json:"contents"`
+        Model       string          `json:"model"`
+        // Updated field names to match Google API
+        Temperature     float32         `json:"temperature"`
+        MaxOutputTokens int             `json:"max_output_tokens"`
+    }
+    
+    // Determine model name based on configuration
+    modelName := "gemini-1.5-pro" // Default model
+    
+    request := googleRequest{
+        Contents: []googleContent{
+            {
+                Parts: []struct {
+                    Text string `json:"text"`
+                }{
+                    {Text: prompt},
+                },
+            },
+        },
+        Model:           modelName,
+        Temperature:     modelConfig.Temperature,
+        MaxOutputTokens: modelConfig.MaxTokens,
+    }
+    
+    // Marshal request to JSON
+    requestBody, err := json.Marshal(request)
+    if err != nil {
+        return "", fmt.Errorf("error marshaling request: %w", err)
+    }
+    
+    // Create HTTP request
+    apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", modelName, apiKey)
+    req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(requestBody))
+    if err != nil {
+        return "", fmt.Errorf("error creating request: %w", err)
+    }
+    
+    // Set headers
+    req.Header.Set("Content-Type", "application/json")
+    
+    // Make the request
+    client := &http.Client{Timeout: 50 * time.Second} // Increased timeout
+    resp, err := client.Do(req)
+    if err != nil {
+        return "", fmt.Errorf("error making request to Google API: %w", err)
+    }
+    defer resp.Body.Close()
+    
+    // Print the full request body for debugging
+    log.Printf("Google API request body: %s", string(requestBody))
+    
+    // Check response status
+    if resp.StatusCode != http.StatusOK {
+        bodyBytes, _ := io.ReadAll(resp.Body)
+        return "", fmt.Errorf("error response from Google API (status %d): %s", resp.StatusCode, string(bodyBytes))
+    }
+    
+    // Parse response
+    var response struct {
+        Candidates []struct {
+            Content struct {
+                Parts []struct {
+                    Text string `json:"text"`
+                } `json:"parts"`
+            } `json:"content"`
+        } `json:"candidates"`
+    }
+    
+    if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+        return "", fmt.Errorf("error parsing Google API response: %w", err)
+    }
+    
+    // Extract text from response
+    var resultText string
+    if len(response.Candidates) > 0 && len(response.Candidates[0].Content.Parts) > 0 {
+        for _, part := range response.Candidates[0].Content.Parts {
+            resultText += part.Text
+        }
+    }
+    
+    if resultText == "" {
+        return "", errors.New("empty response from Google API")
+    }
+    
+    return resultText, nil
 }
 
 // callOpenAIAPI makes API calls to OpenAI models

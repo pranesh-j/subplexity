@@ -21,8 +21,8 @@ import (
 
 // Constants for the Reddit service
 const (
-	redditBaseURL        = "https://www.reddit.com"
-	// UPDATE THIS USER AGENT STRING
+	redditOAuthBaseURL   = "https://oauth.reddit.com"
+	redditPublicBaseURL  = "https://www.reddit.com"
 	redditUserAgent      = "golang:com.subplexity.api:v1.0.0 (by /u/Pran_J)"
 	defaultRequestLimit  = 25
 	maxRequestLimit      = 100
@@ -282,8 +282,8 @@ func (s *RedditService) searchPosts(ctx context.Context, params utils.QueryParam
 	queryParams.Set("sort", params.SortBy)
 	queryParams.Set("t", params.TimeFrame)
 
-	// Make request
-	endpoint := fmt.Sprintf("%s/search.json?%s", redditBaseURL, queryParams.Encode())
+	// Make request - using path only
+	endpoint := fmt.Sprintf("/search.json?%s", queryParams.Encode())
 	return s.executeSearchRequest(ctx, endpoint)
 }
 
@@ -304,8 +304,8 @@ func (s *RedditService) searchComments(ctx context.Context, params utils.QueryPa
 	queryParams.Set("sort", params.SortBy)
 	queryParams.Set("t", params.TimeFrame)
 
-	// Make request
-	endpoint := fmt.Sprintf("%s/search.json?%s", redditBaseURL, queryParams.Encode())
+	// Make request - using path only
+	endpoint := fmt.Sprintf("/search.json?%s", queryParams.Encode())
 	return s.executeSearchRequest(ctx, endpoint)
 }
 
@@ -324,8 +324,8 @@ func (s *RedditService) searchSubreddits(ctx context.Context, params utils.Query
 	queryParams.Set("q", q)
 	queryParams.Set("limit", fmt.Sprintf("%d", limit))
 
-	// Make request
-	endpoint := fmt.Sprintf("%s/subreddits/search.json?%s", redditBaseURL, queryParams.Encode())
+	// Make request - using path only
+	endpoint := fmt.Sprintf("/subreddits/search.json?%s", queryParams.Encode())
 	return s.executeSearchRequest(ctx, endpoint)
 }
 
@@ -344,8 +344,8 @@ func (s *RedditService) searchUserContent(ctx context.Context, params utils.Quer
 	queryParams.Set("sort", params.SortBy)
 	queryParams.Set("t", params.TimeFrame)
 
-	// Make request
-	endpoint := fmt.Sprintf("%s/user/%s.json?%s", redditBaseURL, author, queryParams.Encode())
+	// Make request - using path only
+	endpoint := fmt.Sprintf("/user/%s.json?%s", author, queryParams.Encode())
 	return s.executeSearchRequest(ctx, endpoint)
 }
 
@@ -400,8 +400,8 @@ func (s *RedditService) searchTrending(ctx context.Context, params utils.QueryPa
 			queryParams.Set("limit", fmt.Sprintf("%d", limit/len(subreddits)))
 			queryParams.Set("t", params.TimeFrame)
 
-			// Make request
-			endpoint := fmt.Sprintf("%s/r/%s/%s.json?%s", redditBaseURL, subreddit, sort, queryParams.Encode())
+			// Make request - using path only
+			endpoint := fmt.Sprintf("/r/%s/%s.json?%s", subreddit, sort, queryParams.Encode())
 			results, err := s.executeSearchRequest(ctx, endpoint)
 			if err != nil {
 				log.Printf("Error fetching trending from r/%s: %v", subreddit, err)
@@ -452,20 +452,43 @@ func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint strin
 		// Continue without token - Reddit allows anonymous access with rate limits
 	}
 
+	// Determine which base URL to use and construct the full URL
+	var fullEndpoint string
+	if strings.HasPrefix(endpoint, "http") {
+		// If the endpoint is already a full URL, use it as is
+		fullEndpoint = endpoint
+	} else {
+		// Otherwise, add the base URL
+		if token != "" {
+			// Use OAuth API for authenticated requests
+			fullEndpoint = redditOAuthBaseURL + endpoint
+			log.Printf("Using OAuth endpoint: %s", fullEndpoint)
+		} else {
+			// Use public API for unauthenticated requests
+			fullEndpoint = redditPublicBaseURL + endpoint
+			log.Printf("Using public endpoint: %s", fullEndpoint)
+		}
+	}
+	
 	// Create the request
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", fullEndpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
 	// Set required headers
+	log.Printf("Setting request headers - User-Agent: %s", s.config.UserAgent)
 	req.Header.Set("User-Agent", s.config.UserAgent)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+		log.Printf("Added Authorization header with token length: %d", len(token))
 	}
 
+	// Additional debug headers that help Reddit identify your app
+	req.Header.Set("Accept", "application/json")
+
 	// Log request details for debugging
-	log.Printf("Making Reddit API request to: %s", endpoint)
+	log.Printf("Making Reddit API request to: %s", fullEndpoint)
 
 	// Verify headers are set
 	if req.Header.Get("User-Agent") == "" {
@@ -488,7 +511,7 @@ func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint strin
 				// Context cancelled while waiting
 				return nil, ctx.Err()
 			}
-			log.Printf("Retry attempt %d for request to %s", attempt, endpoint)
+			log.Printf("Retry attempt %d for request to %s", attempt, fullEndpoint)
 		}
 
 		// Clone request to ensure body is available for retry
@@ -524,7 +547,7 @@ func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint strin
 			
 			// Log detailed error info
 			log.Printf("Reddit API error (%d): %s", resp.StatusCode, errorDetails)
-			log.Printf("Request URL: %s", endpoint)
+			log.Printf("Request URL: %s", fullEndpoint)
 			log.Printf("User-Agent: %s", req.Header.Get("User-Agent"))
 			log.Printf("Has Auth Token: %v", token != "")
 			
@@ -553,8 +576,22 @@ func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint strin
 					return nil, fmt.Errorf("access forbidden (403): %s", errorDetails)
 				}
 				
-				// For 403, ensure User-Agent is set and try again
-				req.Header.Set("User-Agent", s.config.UserAgent)
+				// For 403, try different approach - modify URL for public API
+				if token != "" && attempt == 1 {
+					log.Printf("Switching to public API after 403 with authenticated request")
+					// Try public API instead of OAuth API
+					token = ""
+					req.Header.Del("Authorization")
+					
+					// Reconstruct URL with public base
+					if !strings.HasPrefix(endpoint, "http") {
+						fullEndpoint = redditPublicBaseURL + endpoint
+						req, _ = http.NewRequestWithContext(ctx, "GET", fullEndpoint, nil)
+						req.Header.Set("User-Agent", s.config.UserAgent)
+						req.Header.Set("Accept", "application/json")
+					}
+				}
+				
 				continue
 			}
 			

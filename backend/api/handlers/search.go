@@ -6,6 +6,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,7 +40,7 @@ func (h *SearchHandler) Init(ctx context.Context) error {
 
 func (h *SearchHandler) HandleSearch(c *gin.Context) {
 	// Create a context with timeout for the request
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
 
 	var req models.SearchRequest
@@ -109,6 +110,34 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 			},
 		})
 		return
+	}
+
+	// Filter out irrelevant results
+	var relevantResults []models.SearchResult
+	for _, result := range results {
+		// Check if title or content contains any of the main query terms
+		isRelevant := false
+		resultText := strings.ToLower(result.Title + " " + result.Content)
+		
+		// Check for key terms that must be present
+		requiredTerms := []string{"severance", "s2", "season", "episode", "ep", "review"}
+		
+		for _, term := range requiredTerms {
+			if strings.Contains(resultText, term) {
+				isRelevant = true
+				break
+			}
+		}
+		
+		if isRelevant {
+			relevantResults = append(relevantResults, result)
+		}
+	}
+	
+	// Only use relevant results if we found any
+	if len(relevantResults) > 0 {
+		log.Printf("Filtered results from %d to %d relevant items", len(results), len(relevantResults))
+		results = relevantResults
 	}
 
 	// Process results with AI (with error handling)

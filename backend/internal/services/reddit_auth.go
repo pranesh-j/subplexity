@@ -86,7 +86,8 @@ func (r *RedditAuth) GetAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("error creating token request: %w", err)
 	}
 	
-	// Set required headers
+	// Set required headers with more detailed logging
+	log.Printf("Setting auth headers - User-Agent: %s", r.userAgent)
 	req.Header.Set("User-Agent", r.userAgent)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	
@@ -94,6 +95,9 @@ func (r *RedditAuth) GetAccessToken(ctx context.Context) (string, error) {
 	authStr := fmt.Sprintf("%s:%s", r.clientID, r.clientSecret)
 	encodedAuth := base64.StdEncoding.EncodeToString([]byte(authStr))
 	req.Header.Set("Authorization", "Basic "+encodedAuth)
+	
+	// Log full request details before sending (redacting the auth token for security)
+	log.Printf("Sending token request to %s with User-Agent: %s", redditTokenURL, req.Header.Get("User-Agent"))
 	
 	// Make the request
 	resp, err := r.httpClient.Do(req)
