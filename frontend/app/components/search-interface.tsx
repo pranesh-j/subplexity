@@ -1,4 +1,4 @@
-// Updated version of frontend/app/components/search-interface.tsx
+// frontend/app/components/search-interface.tsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -26,7 +26,7 @@ export function SearchInterface() {
   const [searchResults, setSearchResults] = useState<SearchResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   
-  // New state for research progress
+  // State for research progress
   const [researchSteps, setResearchSteps] = useState<ResearchStep[]>([
     { title: "Creating research plan", status: "pending" },
     { title: "Searching Reddit", status: "pending" },
@@ -57,7 +57,6 @@ export function SearchInterface() {
     setResearchSteps(initialSteps)
     setCurrentStep(0)
     
-    // Use normal fetch for the search
     try {
       // Start with the research plan (step 0)
       setTimeout(() => {
@@ -87,7 +86,7 @@ export function SearchInterface() {
       })
       setCurrentStep(2)
       
-      // Simulate streaming by showing partial results
+      // Set search results
       setSearchResults(results)
       
       // Begin "streaming" the answer with a delay
@@ -127,10 +126,10 @@ export function SearchInterface() {
       
     } catch (err) {
       console.error("Search error:", err)
-      setError("Failed to search Reddit: " + (err instanceof Error ? err.message : "Unknown error"))
+      setError("Failed to complete search. Please try again.")
       setIsSearching(false)
       
-      // Reset research steps to show error
+      // Reset research steps on error
       setResearchSteps(initialSteps.map(step => ({ ...step, status: "pending" })))
     }
   }
@@ -210,28 +209,23 @@ export function SearchInterface() {
         />
       )}
 
-      {/* Show streamed answer if available */}
-      {streamedAnswer && (
-        <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-6 mt-4">
-          <h2 className="text-xl font-bold mb-4">AI Analysis</h2>
-          {searchResults?.reasoning && (
-            <div className="mb-6">
-              <h3 className="text-sm font-medium text-zinc-400 mb-2">Reasoning</h3>
-              <div className="p-4 bg-zinc-800/50 rounded-lg text-zinc-300">
-                {searchResults.reasoning}
-              </div>
-            </div>
-          )}
-          <AIAnswer 
-            answer={streamedAnswer} 
-            citations={searchResults?.citations}
-            lastUpdated={searchResults?.lastUpdated}
-          />
-          
-          {/* Show citations if available */}
-          {searchResults?.citations && searchResults.citations.length > 0 && (
-            <SearchCitations citations={searchResults.citations} />
-          )}
+      {/* Show AI Analysis */}
+      {searchResults && (
+        <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg shadow-sm mt-4">
+          <div className="p-6">
+            <h2 className="text-xl font-bold mb-4">AI Analysis</h2>
+            <AIAnswer 
+              reasoning={searchResults.reasoning}
+              answer={streamedAnswer || searchResults.answer}
+              citations={searchResults.citations}
+              lastUpdated={searchResults.lastUpdated}
+            />
+            
+            {/* Show citations if available */}
+            {searchResults.citations && searchResults.citations.length > 0 && (
+              <SearchCitations citations={searchResults.citations} />
+            )}
+          </div>
         </div>
       )}
 

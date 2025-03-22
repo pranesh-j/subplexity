@@ -1,17 +1,20 @@
+// frontend/app/components/ai-answer.tsx
 import React, { useState } from 'react';
-import { Sparkles, Info, Copy, Check, ExternalLink } from 'lucide-react';
+import { Sparkles, Info, Copy, Check, ExternalLink, Brain } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Citation } from './api-client';
 import { Button } from './ui/button';
 
 interface AIAnswerProps {
+  reasoning: string;
   answer: string;
   citations?: Citation[];
   lastUpdated?: number;
 }
 
-export default function AIAnswer({ answer, citations, lastUpdated }: AIAnswerProps) {
+export default function AIAnswer({ reasoning, answer, citations, lastUpdated }: AIAnswerProps) {
   const [copied, setCopied] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(false);
 
   // Process citations
   const processMarkdownWithCitations = (markdown: string): string => {
@@ -121,43 +124,74 @@ export default function AIAnswer({ answer, citations, lastUpdated }: AIAnswerPro
   };
 
   return (
-    <div className="mt-5">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-5 text-primary" />
-          <h2 className="text-base font-semibold text-neutral-800 dark:text-neutral-200">
-            Answer
-          </h2>
+    <div className="mt-5 space-y-6">
+      {/* Reasoning Section (Collapsible) */}
+      <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden">
+        <button 
+          onClick={() => setShowReasoning(!showReasoning)}
+          className="w-full flex items-center justify-between p-4 bg-neutral-50 dark:bg-neutral-900 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Brain className="size-5 text-blue-500" />
+            <h2 className="text-base font-semibold text-neutral-800 dark:text-neutral-200">
+              AI Reasoning
+            </h2>
+          </div>
+          <span className="text-xs text-neutral-500">
+            {showReasoning ? "Hide" : "Show"} reasoning process
+          </span>
+        </button>
+        
+        {showReasoning && reasoning && (
+          <div className="p-4 bg-neutral-50/50 dark:bg-neutral-900/50 border-t border-neutral-200 dark:border-neutral-800">
+            <div className="prose prose-sm max-w-none dark:prose-invert">
+              <ReactMarkdown components={components}>
+                {reasoning}
+              </ReactMarkdown>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Answer Section */}
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="size-5 text-primary" />
+            <h2 className="text-base font-semibold text-neutral-800 dark:text-neutral-200">
+              Answer
+            </h2>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {lastUpdated && (
+              <div className="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 mr-2">
+                <Info className="size-3" />
+                <span>As of {formatLastUpdated()}</span>
+              </div>
+            )}
+            
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleCopy}
+              className="h-8 px-2 text-xs rounded-full"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 mr-1.5" />
+              ) : (
+                <Copy className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
         </div>
         
-        <div className="flex items-center gap-2">
-          {lastUpdated && (
-            <div className="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 mr-2">
-              <Info className="size-3" />
-              <span>As of {formatLastUpdated()}</span>
-            </div>
-          )}
-          
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={handleCopy}
-            className="h-8 px-2 text-xs rounded-full"
-          >
-            {copied ? (
-              <Check className="h-3.5 w-3.5 mr-1.5" />
-            ) : (
-              <Copy className="h-3.5 w-3.5 mr-1.5" />
-            )}
-            {copied ? "Copied" : "Copy"}
-          </Button>
+        <div className="prose prose-sm max-w-none dark:prose-invert pb-2">
+          <ReactMarkdown components={components}>
+            {processMarkdownWithCitations(answer)}
+          </ReactMarkdown>
         </div>
-      </div>
-      
-      <div className="prose prose-sm max-w-none dark:prose-invert pb-2">
-        <ReactMarkdown components={components}>
-          {processMarkdownWithCitations(answer)}
-        </ReactMarkdown>
       </div>
     </div>
   );

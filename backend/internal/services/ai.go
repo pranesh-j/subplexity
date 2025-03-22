@@ -59,12 +59,14 @@ func buildStructuredPrompt(query string, results []models.SearchResult) string {
 	content.WriteString(fmt.Sprintf("User Query: %s\n\n", query))
 	
 	content.WriteString("## Instructions:\n")
-	content.WriteString("1. Analyze the top Reddit search results below.\n")
-	content.WriteString("2. Provide a detailed reasoning process that shows your analysis of the content, relevance, and reliability of the results.\n")
-	content.WriteString("3. Provide a clear, comprehensive answer to the user's query based on the Reddit content.\n")
-	content.WriteString("4. Format citations using [1], [2], etc. that reference the numbered results below.\n")
-	content.WriteString("5. If the search results don't provide sufficient information, acknowledge this limitation.\n")
-	content.WriteString("6. IMPORTANT: Your response MUST have two clearly labeled sections: '## Reasoning' and '## Answer'.\n\n")
+	content.WriteString("1. Analyze the top, recent and strictly accurate matching to all the keywords from the Reddit search you get which are highly matching every single keywords, again they should be very highly matching to the all keywords not just one keyword in the question user asks.\n")
+	content.WriteString("2. Your response MUST have exactly two sections, clearly labeled with headers:\n")
+	content.WriteString("   - First section MUST be titled '## Reasoning' and contain your detailed analysis you do before you arrive at your answer.\n")
+	content.WriteString("   - Second section MUST be titled '## Answer' and provide a clear, comprehensive answer.\n")
+	content.WriteString("3. In the Reasoning section, analyze the content, relevance, high accuracy matching and reliability of the results.\n")
+	content.WriteString("4. In the Answer section, provide a concise yet comprehensive answer based solely on the Reddit content.\n")
+	content.WriteString("5. Format citations using [1], [2], etc. that reference the numbered results below.\n")
+	content.WriteString("6. If the search results don't provide sufficient information, state this in your answer.\n\n")
 	
 	content.WriteString("## Reddit Search Results:\n\n")
 	
@@ -356,7 +358,7 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
                 },
             },
         },
-        Model: "gemini-1.5-flash",
+        Model: "gemini-2.0-flash",
         GenerationConfig: struct {
             Temperature float64 `json:"temperature"`
         }{
@@ -413,34 +415,95 @@ func (s *AIService) processWithGemini(query, content string) (string, string, er
 
 // extractReasoningAndAnswer separates the response into reasoning and answer sections
 func extractReasoningAndAnswer(fullText string) (string, string) {
-	// Look for markdown section headers for reasoning and answer
-	reasoningRegex := regexp.MustCompile(`(?i)(?:#+\s*Reasoning|Reasoning:?)\s*`)
-	answerRegex := regexp.MustCompile(`(?i)(?:#+\s*Answer|Answer:?)\s*`)
-	
-	reasoningMatch := reasoningRegex.FindStringIndex(fullText)
-	answerMatch := answerRegex.FindStringIndex(fullText)
-	
-	if reasoningMatch != nil && answerMatch != nil && answerMatch[0] > reasoningMatch[0] {
-		// Found both markers in the expected order
-		reasoningStart := reasoningMatch[1] // End of "## Reasoning" marker
-		answerStart := answerMatch[0]      // Start of "## Answer" marker
-		
-		reasoning := strings.TrimSpace(fullText[reasoningStart:answerStart])
-		answer := strings.TrimSpace(fullText[answerMatch[1]:]) // From end of "## Answer" marker to end
-		
-		return reasoning, answer
-	}
-	
-	// Fallback: If we can't find clear markers, try to split the response roughly in half
-	midpoint := len(fullText) / 2
-	
-	// Try to find a paragraph break near the midpoint
-	for i := midpoint; i < len(fullText)-1; i++ {
-		if fullText[i] == '\n' && fullText[i+1] == '\n' {
-			return strings.TrimSpace(fullText[:i]), strings.TrimSpace(fullText[i+2:])
-		}
-	}
-	
-	// Last resort: Just split in half
-	return strings.TrimSpace(fullText[:midpoint]), strings.TrimSpace(fullText[midpoint:])
+    // Look for markdown section headers for reasoning and answer
+    reasoningRegex := regexp.MustCompile(`(?i)(?:#+\s*Reasoning|Reasoning:?)\s*`)
+    answerRegex := regexp.MustCompile(`(?i)(?:#+\s*Answer|Answer:?)\s*`)
+    
+    reasoningMatch := reasoningRegex.FindStringIndex(fullText)
+    answerMatch := answerRegex.FindStringIndex(fullText)
+    
+    if reasoningMatch != nil && answerMatch != nil && answerMatch[0] > reasoningMatch[0] {
+        // Found both markers in the expected order
+        reasoningStart := reasoningMatch[1] // End of "## Reasoning" marker
+        answerStart := answerMatch[0]      // Start of "## Answer" marker
+        
+        reasoning := strings.TrimSpace(fullText[reasoningStart:answerStart])
+        answer := strings.TrimSpace(fullText[answerMatch[1]:]) // From end of "## Answer" marker to end
+        
+        return reasoning, answer
+    }
+    
+    // If we only found a reasoning section but no answer section, use an empty answer
+    if reasoningMatch != nil && answerMatch == nil {
+        reasoningStart := reasoningMatch[1]
+        reasoning := strings.TrimSpace(fullText[reasoningStart:])
+        return reasoning, "Based on the search results, a clear answer couldn't be determined. Please review the reasoning and source materials for more information."
+    }
+    
+    // If we only found an answer section but no reasoning section, use an empty reasoning
+    if reasoningMatch == nil && answerMatch != nil {
+        answerStart := answerMatch[1]
+        answer := strings.TrimSpace(fullText[answerStart:])
+        return "Reasoning not explicitly provided by the AI.", answer
+    }
+    
+    // Look for other potential section markers that might indicate reasoning vs answer
+    analysisRegex := regexp.MustCompile(`(?i)(?:#+\s*Analysis|Analysis:?)\s*`)
+    summaryRegex := regexp.MustCompile(`(?i)(?:#+\s*Summary|Summary:?|Conclusion:?|#+\s*Conclusion)\s*`)
+    
+    analysisMatch := analysisRegex.FindStringIndex(fullText)
+    summaryMatch := summaryRegex.FindStringIndex(fullText)
+    
+    if analysisMatch != nil && summaryMatch != nil && summaryMatch[0] > analysisMatch[0] {
+        // Found Analysis and Summary/Conclusion markers
+        analysisStart := analysisMatch[1]
+        summaryStart := summaryMatch[0]
+        
+        reasoning := strings.TrimSpace(fullText[analysisStart:summaryStart])
+        answer := strings.TrimSpace(fullText[summaryMatch[1]:])
+        
+        return reasoning, answer
+    }
+    
+    // If all else fails, the most reliable approach is to assume the first part is reasoning
+    // and the last paragraph(s) are the answer/conclusion
+    
+    // Find the last two paragraph breaks
+    lines := strings.Split(fullText, "\n")
+    lastEmptyLineIndex := -1
+    secondLastEmptyLineIndex := -1
+    
+    for i := len(lines) - 1; i >= 0; i-- {
+        if strings.TrimSpace(lines[i]) == "" {
+            if lastEmptyLineIndex == -1 {
+                lastEmptyLineIndex = i
+            } else {
+                secondLastEmptyLineIndex = i
+                break
+            }
+        }
+    }
+    
+    // If we found at least one paragraph break, use it to separate reasoning from answer
+    if secondLastEmptyLineIndex > 0 {
+        // Join all lines up to the second last empty line for reasoning
+        reasoning := strings.TrimSpace(strings.Join(lines[:secondLastEmptyLineIndex], "\n"))
+        
+        // Join all lines after the last empty line for answer
+        answer := strings.TrimSpace(strings.Join(lines[lastEmptyLineIndex+1:], "\n"))
+        
+        // If the answer seems too short, include more paragraphs
+        if len(answer) < 100 && secondLastEmptyLineIndex > 0 {
+            answer = strings.TrimSpace(strings.Join(lines[secondLastEmptyLineIndex+1:], "\n"))
+        }
+        
+        return reasoning, answer
+    }
+    
+    // As an absolute last resort, split the text in half
+    midpoint := len(fullText) / 2
+    reasoning := strings.TrimSpace(fullText[:midpoint])
+    answer := strings.TrimSpace(fullText[midpoint:])
+    
+    return reasoning, answer
 }
