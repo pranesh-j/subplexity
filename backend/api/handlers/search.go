@@ -114,6 +114,9 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 		}
 	}
 
+	// Extract reasoning steps
+	reasoningSteps := extractReasoningSteps(reasoning)
+	
 	// Generate citations from the answer
 	citations := extractCitations(answer, results)
 
@@ -129,13 +132,14 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 
 	// Prepare response
 	response := models.SearchResponse{
-		Results:     results,
-		TotalCount:  len(results),
-		Reasoning:   reasoning,
-		Answer:      answer,
-		Citations:   citations,
-		ElapsedTime: elapsedTime,
-		LastUpdated: time.Now().Unix(),
+		Results:        results,
+		TotalCount:     len(results),
+		Reasoning:      reasoning,
+		ReasoningSteps: reasoningSteps, // Add this field
+		Answer:         answer,
+		Citations:      citations,
+		ElapsedTime:    elapsedTime,
+		LastUpdated:    time.Now().Unix(),
 		RequestParams: models.RequestParams{
 			Query:      req.Query,
 			SearchMode: req.SearchMode,
@@ -382,4 +386,53 @@ func splitIntoSentences(text string) []string {
 	}
 	
 	return sentences
+}
+
+// Add this new function to extract reasoning steps
+func extractReasoningSteps(reasoning string) []models.ReasoningStep {
+    var steps []models.ReasoningStep
+    
+    // Match step headers like "## Step 1: Understanding the query"
+    stepRegex := regexp.MustCompile(`(?m)^#+\s*Step\s+\d+:?\s*(.+)$`)
+    matches := stepRegex.FindAllStringSubmatchIndex(reasoning, -1)
+    
+    if len(matches) == 0 {
+        // If no explicit steps, try to find other headers
+        headerRegex := regexp.MustCompile(`(?m)^#+\s*(.+)$`)
+        matches = headerRegex.FindAllStringSubmatchIndex(reasoning, -1)
+    }
+    
+    for i, match := range matches {
+        // Extract the step title
+        titleStart := match[2]
+        titleEnd := match[3]
+        title := reasoning[titleStart:titleEnd]
+        
+        // Determine the content boundaries
+        contentStart := match[1] // End of the header
+        contentEnd := len(reasoning)
+        
+        // If there's a next match, use its start as this step's end
+        if i < len(matches)-1 {
+            contentEnd = matches[i+1][0]
+        }
+        
+        // Extract the content
+        content := strings.TrimSpace(reasoning[contentStart:contentEnd])
+        
+        steps = append(steps, models.ReasoningStep{
+            Title:   title,
+            Content: content,
+        })
+    }
+    
+    // If we couldn't find any steps, create a single generic step
+    if len(steps) == 0 && len(reasoning) > 0 {
+        steps = append(steps, models.ReasoningStep{
+            Title:   "Analysis of search results",
+            Content: reasoning,
+        })
+    }
+    
+    return steps
 }

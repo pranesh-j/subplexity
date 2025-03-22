@@ -216,6 +216,7 @@ export function SearchInterface() {
             <h2 className="text-xl font-bold mb-4">AI Analysis</h2>
             <AIAnswer 
               reasoning={searchResults.reasoning}
+              reasoningSteps={searchResults.reasoningSteps} 
               answer={streamedAnswer || searchResults.answer}
               citations={searchResults.citations}
               lastUpdated={searchResults.lastUpdated}

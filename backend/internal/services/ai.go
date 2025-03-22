@@ -1,56 +1,8 @@
 // backend/internal/services/ai.go
-package services
+// Note: This is a partial file update - only the modified functions are shown.
+// Keep all other functions unchanged
 
-import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"regexp"
-	"strings"
-	"time"
-
-	"github.com/pranesh-j/subplexity/internal/models"
-)
-
-type AIService struct {
-	AnthropicAPIKey string
-	OpenAIAPIKey    string
-	GoogleAPIKey    string
-	httpClient      *http.Client
-}
-
-func NewAIService() *AIService {
-	return &AIService{
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
-		GoogleAPIKey:    os.Getenv("GOOGLE_API_KEY"),
-		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
-	}
-}
-
-// ProcessResults uses AI to analyze search results and generate a response
-func (s *AIService) ProcessResults(query string, results []models.SearchResult, modelName string) (string, string, error) {
-	// Create structured prompt with clear separation instructions
-	prompt := buildStructuredPrompt(query, results)
-
-	switch modelName {
-	case "Claude":
-		return s.processWithAnthropic(query, prompt)
-	case "DeepSeek R1":
-		return s.processWithOpenAI(query, prompt)
-	case "Google Gemini":
-		return s.processWithGemini(query, prompt)
-	default:
-		return s.processWithAnthropic(query, prompt)
-	}
-}
-
-// buildStructuredPrompt creates a detailed prompt with clear instructions
+// Replace the existing buildStructuredPrompt function with this:
 func buildStructuredPrompt(query string, results []models.SearchResult) string {
 	var content strings.Builder
 	
@@ -59,14 +11,19 @@ func buildStructuredPrompt(query string, results []models.SearchResult) string {
 	content.WriteString(fmt.Sprintf("User Query: %s\n\n", query))
 	
 	content.WriteString("## Instructions:\n")
-	content.WriteString("1. Analyze the top, recent and strictly accurate matching to all the keywords from the Reddit search you get which are highly matching every single keywords, again they should be very highly matching to the all keywords not just one keyword in the question user asks.\n")
-	content.WriteString("2. Your response MUST have exactly two sections, clearly labeled with headers:\n")
-	content.WriteString("   - First section MUST be titled '## Reasoning' and contain your detailed analysis you do before you arrive at your answer.\n")
-	content.WriteString("   - Second section MUST be titled '## Answer' and provide a clear, comprehensive answer.\n")
-	content.WriteString("3. In the Reasoning section, analyze the content, relevance, high accuracy matching and reliability of the results.\n")
-	content.WriteString("4. In the Answer section, provide a concise yet comprehensive answer based solely on the Reddit content.\n")
-	content.WriteString("5. Format citations using [1], [2], etc. that reference the numbered results below.\n")
-	content.WriteString("6. If the search results don't provide sufficient information, state this in your answer.\n\n")
+	content.WriteString("1. You will solve this step-by-step using multiple reasoning steps, clearly labeled.\n")
+	content.WriteString("2. First, think about what information you need to answer this query effectively.\n")
+	content.WriteString("3. For each result, evaluate its relevance, credibility, and key information.\n") 
+	content.WriteString("4. Identify conflicts, agreements, and patterns across different sources.\n")
+	content.WriteString("5. Draw conclusions based on the most reliable information.\n")
+	content.WriteString("6. Format your response with the following structure:\n")
+	content.WriteString("   - '## Step 1: Understanding the query'\n")
+	content.WriteString("   - '## Step 2: Analyzing key sources'\n") 
+	content.WriteString("   - '## Step 3: Evaluating conflicting information' (if applicable)\n")
+	content.WriteString("   - '## Step 4: Synthesizing findings'\n")
+	content.WriteString("   - '## Answer: [Clear, direct answer to the user's query]'\n")
+	content.WriteString("7. Each step should show your detailed thinking process.\n")
+	content.WriteString("8. Use [1], [2], etc. to cite specific results.\n\n")
 	
 	content.WriteString("## Reddit Search Results:\n\n")
 	
@@ -112,398 +69,73 @@ func buildStructuredPrompt(query string, results []models.SearchResult) string {
 	}
 	
 	content.WriteString("## Expected Response Format:\n\n")
-	content.WriteString("### Reasoning\n")
-	content.WriteString("In this section, provide your detailed analysis of the Reddit results. Discuss:\n")
-	content.WriteString("- The credibility and relevance of the sources\n")
-	content.WriteString("- Agreement or disagreement among posts\n")
-	content.WriteString("- Trends or patterns in the posts\n")
-	content.WriteString("- How recent/current the information is\n\n")
+	content.WriteString("### Step 1: Understanding the query\n")
+	content.WriteString("Start by analyzing what the user is really asking for and what kind of information would satisfy their query.\n\n")
+	
+	content.WriteString("### Step 2: Analyzing key sources\n")
+	content.WriteString("Evaluate the most relevant sources and extract key information that helps answer the query.\n\n")
+	
+	content.WriteString("### Step 3: Evaluating conflicting information\n")
+	content.WriteString("Identify and resolve any contradictions or conflicts between different sources.\n\n")
+	
+	content.WriteString("### Step 4: Synthesizing findings\n")
+	content.WriteString("Bring together all the key insights to form a coherent understanding.\n\n")
 	
 	content.WriteString("### Answer\n")
-	content.WriteString("In this section, provide a comprehensive, direct answer to the user's query based on your analysis.\n")
-	content.WriteString("- State clear conclusions\n")
-	content.WriteString("- Use specific citations like [1], [2] to reference source posts\n")
-	content.WriteString("- Acknowledge any limitations in the available information\n")
-	content.WriteString("- Format the answer in clear paragraphs with markdown formatting as needed\n\n")
+	content.WriteString("Finally, provide a direct, comprehensive answer to the user's query with citations.\n\n")
 	
 	return content.String()
 }
 
-// formatTimeAgo converts a time to a human-readable "X time ago" format
-func formatTimeAgo(t time.Time) string {
-	now := time.Now()
-	diff := now.Sub(t)
-	
-	if diff < time.Minute {
-		return "just now"
-	} else if diff < time.Hour {
-		minutes := int(diff.Minutes())
-		if minutes == 1 {
-			return "1 minute ago"
-		}
-		return fmt.Sprintf("%d minutes ago", minutes)
-	} else if diff < 24*time.Hour {
-		hours := int(diff.Hours())
-		if hours == 1 {
-			return "1 hour ago"
-		}
-		return fmt.Sprintf("%d hours ago", hours)
-	} else if diff < 48*time.Hour {
-		return "yesterday"
-	} else if diff < 7*24*time.Hour {
-		days := int(diff.Hours() / 24)
-		return fmt.Sprintf("%d days ago", days)
-	} else if diff < 30*24*time.Hour {
-		weeks := int(diff.Hours() / 24 / 7)
-		if weeks == 1 {
-			return "1 week ago"
-		}
-		return fmt.Sprintf("%d weeks ago", weeks)
-	} else if diff < 365*24*time.Hour {
-		months := int(diff.Hours() / 24 / 30)
-		if months == 1 {
-			return "1 month ago"
-		}
-		return fmt.Sprintf("%d months ago", months)
-	}
-	
-	years := int(diff.Hours() / 24 / 365)
-	if years == 1 {
-		return "1 year ago"
-	}
-	return fmt.Sprintf("%d years ago", years)
-}
-
-func (s *AIService) processWithAnthropic(query, content string) (string, string, error) {
-	if s.AnthropicAPIKey == "" {
-		return "", "", fmt.Errorf("missing Anthropic API key")
-	}
-
-	// Structure for Anthropic API v1/messages
-	type anthropicRequest struct {
-		Model       string                   `json:"model"`
-		System      string                   `json:"system"`
-		Messages    []map[string]string      `json:"messages"`
-		MaxTokens   int                      `json:"max_tokens"`
-		Temperature float64                  `json:"temperature"`
-	}
-
-	systemMessage := "You are an AI assistant that analyzes Reddit search results. You provide clear reasoning followed by a comprehensive answer, with proper citations to the source posts."
-
-	// Create the request body with the correct structure
-	requestBody := anthropicRequest{
-		Model:     "claude-3-sonnet-20240229",
-		System:    systemMessage,
-		Messages: []map[string]string{
-			{
-				"role":    "user",
-				"content": content,
-			},
-		},
-		MaxTokens:   2000,
-		Temperature: 0.2,
-	}
-
-	jsonData, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", "", fmt.Errorf("error marshaling request: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", "", fmt.Errorf("error creating request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", s.AnthropicAPIKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("error making request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("error response from Anthropic API: %s - %s", resp.Status, string(bodyBytes))
-	}
-
-	var response struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", "", fmt.Errorf("error decoding response: %w", err)
-	}
-
-	// Extract all text content from response
-	var fullText string
-	for _, content := range response.Content {
-		if content.Type == "text" {
-			fullText += content.Text
-		}
-	}
-
-	// Split response into reasoning and answer 
-	reasoning, answer := extractReasoningAndAnswer(fullText)
-	
-	return reasoning, answer, nil
-}
-
-func (s *AIService) processWithOpenAI(query, content string) (string, string, error) {
-	if s.OpenAIAPIKey == "" {
-		return "", "", fmt.Errorf("missing OpenAI API key")
-	}
-
-	type openAIRequest struct {
-		Model       string                   `json:"model"`
-		Messages    []map[string]interface{} `json:"messages"`
-		Temperature float64                  `json:"temperature"`
-	}
-
-	requestBody := openAIRequest{
-		Model: "gpt-4-turbo",
-		Messages: []map[string]interface{}{
-			{
-				"role":    "system",
-				"content": "You are an AI assistant that analyzes Reddit search results. You provide clear reasoning followed by a comprehensive answer, with proper citations to the source posts.",
-			},
-			{
-				"role":    "user",
-				"content": content,
-			},
-		},
-		Temperature: 0.2,
-	}
-
-	jsonData, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", "", fmt.Errorf("error marshaling request: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", "", fmt.Errorf("error creating request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.OpenAIAPIKey)
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("error making request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("error response from OpenAI API: %s - %s", resp.Status, string(bodyBytes))
-	}
-
-	var response struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", "", fmt.Errorf("error decoding response: %w", err)
-	}
-
-	if len(response.Choices) == 0 {
-		return "", "", fmt.Errorf("no response content from OpenAI API")
-	}
-
-	fullText := response.Choices[0].Message.Content
-	reasoning, answer := extractReasoningAndAnswer(fullText)
-	
-	return reasoning, answer, nil
-}
-
-func (s *AIService) processWithGemini(query, content string) (string, string, error) {
-    if s.GoogleAPIKey == "" {
-        return "", "", fmt.Errorf("missing Google API key")
-    }
-
-    type geminiPart struct {
-        Text string `json:"text"`
-    }
-
-    type geminiContent struct {
-        Parts []geminiPart `json:"parts"`
-        Role  string       `json:"role"`
-    }
-
-    type geminiRequest struct {
-        Contents []geminiContent `json:"contents"`
-        Model    string          `json:"model"`
-        GenerationConfig struct {
-            Temperature float64 `json:"temperature"`
-        } `json:"generationConfig"`
-    }
-
-    // Initialize request with Gemini model
-    requestBody := geminiRequest{
-        Contents: []geminiContent{
-            {
-                Role: "user",
-                Parts: []geminiPart{
-                    {Text: content},
-                },
-            },
-        },
-        Model: "gemini-2.0-flash",
-        GenerationConfig: struct {
-            Temperature float64 `json:"temperature"`
-        }{
-            Temperature: 0.2,
-        },
-    }
-
-    jsonData, err := json.Marshal(requestBody)
-    if err != nil {
-        return "", "", fmt.Errorf("error marshaling request: %w", err)
-    }
-
-    req, err := http.NewRequest("POST", "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key="+s.GoogleAPIKey, bytes.NewBuffer(jsonData))
-    if err != nil {
-        return "", "", fmt.Errorf("error creating request: %w", err)
-    }
-
-    req.Header.Set("Content-Type", "application/json")
-
-    resp, err := s.httpClient.Do(req)
-    if err != nil {
-        return "", "", fmt.Errorf("error making request: %w", err)
-    }
-    defer resp.Body.Close()
-
-    if resp.StatusCode != http.StatusOK {
-        bodyBytes, _ := io.ReadAll(resp.Body)
-        return "", "", fmt.Errorf("error response from Google API: %s - %s", resp.Status, string(bodyBytes))
-    }
-
-    var response struct {
-        Candidates []struct {
-            Content struct {
-                Parts []struct {
-                    Text string `json:"text"`
-                } `json:"parts"`
-            } `json:"content"`
-        } `json:"candidates"`
-    }
-
-    if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-        return "", "", fmt.Errorf("error decoding response: %w", err)
-    }
-    
-    if len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 {
-        return "", "", fmt.Errorf("no response content from Gemini API")
-    }
-
-    fullText := response.Candidates[0].Content.Parts[0].Text
-    reasoning, answer := extractReasoningAndAnswer(fullText)
-    
-    return reasoning, answer, nil
-}
-
-// extractReasoningAndAnswer separates the response into reasoning and answer sections
+// Replace the existing extractReasoningAndAnswer function with this:
 func extractReasoningAndAnswer(fullText string) (string, string) {
-    // Look for markdown section headers for reasoning and answer
-    reasoningRegex := regexp.MustCompile(`(?i)(?:#+\s*Reasoning|Reasoning:?)\s*`)
-    answerRegex := regexp.MustCompile(`(?i)(?:#+\s*Answer|Answer:?)\s*`)
-    
-    reasoningMatch := reasoningRegex.FindStringIndex(fullText)
-    answerMatch := answerRegex.FindStringIndex(fullText)
-    
-    if reasoningMatch != nil && answerMatch != nil && answerMatch[0] > reasoningMatch[0] {
-        // Found both markers in the expected order
-        reasoningStart := reasoningMatch[1] // End of "## Reasoning" marker
-        answerStart := answerMatch[0]      // Start of "## Answer" marker
-        
-        reasoning := strings.TrimSpace(fullText[reasoningStart:answerStart])
-        answer := strings.TrimSpace(fullText[answerMatch[1]:]) // From end of "## Answer" marker to end
-        
-        return reasoning, answer
-    }
-    
-    // If we only found a reasoning section but no answer section, use an empty answer
-    if reasoningMatch != nil && answerMatch == nil {
-        reasoningStart := reasoningMatch[1]
-        reasoning := strings.TrimSpace(fullText[reasoningStart:])
-        return reasoning, "Based on the search results, a clear answer couldn't be determined. Please review the reasoning and source materials for more information."
-    }
-    
-    // If we only found an answer section but no reasoning section, use an empty reasoning
-    if reasoningMatch == nil && answerMatch != nil {
-        answerStart := answerMatch[1]
-        answer := strings.TrimSpace(fullText[answerStart:])
-        return "Reasoning not explicitly provided by the AI.", answer
-    }
-    
-    // Look for other potential section markers that might indicate reasoning vs answer
-    analysisRegex := regexp.MustCompile(`(?i)(?:#+\s*Analysis|Analysis:?)\s*`)
-    summaryRegex := regexp.MustCompile(`(?i)(?:#+\s*Summary|Summary:?|Conclusion:?|#+\s*Conclusion)\s*`)
-    
-    analysisMatch := analysisRegex.FindStringIndex(fullText)
-    summaryMatch := summaryRegex.FindStringIndex(fullText)
-    
-    if analysisMatch != nil && summaryMatch != nil && summaryMatch[0] > analysisMatch[0] {
-        // Found Analysis and Summary/Conclusion markers
-        analysisStart := analysisMatch[1]
-        summaryStart := summaryMatch[0]
-        
-        reasoning := strings.TrimSpace(fullText[analysisStart:summaryStart])
-        answer := strings.TrimSpace(fullText[summaryMatch[1]:])
-        
-        return reasoning, answer
-    }
-    
-    // If all else fails, the most reliable approach is to assume the first part is reasoning
-    // and the last paragraph(s) are the answer/conclusion
-    
-    // Find the last two paragraph breaks
-    lines := strings.Split(fullText, "\n")
-    lastEmptyLineIndex := -1
-    secondLastEmptyLineIndex := -1
-    
-    for i := len(lines) - 1; i >= 0; i-- {
-        if strings.TrimSpace(lines[i]) == "" {
-            if lastEmptyLineIndex == -1 {
-                lastEmptyLineIndex = i
-            } else {
-                secondLastEmptyLineIndex = i
-                break
-            }
-        }
-    }
-    
-    // If we found at least one paragraph break, use it to separate reasoning from answer
-    if secondLastEmptyLineIndex > 0 {
-        // Join all lines up to the second last empty line for reasoning
-        reasoning := strings.TrimSpace(strings.Join(lines[:secondLastEmptyLineIndex], "\n"))
-        
-        // Join all lines after the last empty line for answer
-        answer := strings.TrimSpace(strings.Join(lines[lastEmptyLineIndex+1:], "\n"))
-        
-        // If the answer seems too short, include more paragraphs
-        if len(answer) < 100 && secondLastEmptyLineIndex > 0 {
-            answer = strings.TrimSpace(strings.Join(lines[secondLastEmptyLineIndex+1:], "\n"))
-        }
-        
-        return reasoning, answer
-    }
-    
-    // As an absolute last resort, split the text in half
-    midpoint := len(fullText) / 2
-    reasoning := strings.TrimSpace(fullText[:midpoint])
-    answer := strings.TrimSpace(fullText[midpoint:])
-    
-    return reasoning, answer
+	// Extract steps of reasoning and the final answer
+	answerRegex := regexp.MustCompile(`(?i)(?:#+\s*Answer:?|#+\s*Conclusion:?)\s*`)
+	answerMatch := answerRegex.FindStringIndex(fullText)
+	
+	if answerMatch != nil {
+		// Everything before the answer is reasoning
+		reasoning := strings.TrimSpace(fullText[:answerMatch[0]])
+		// Everything after the answer marker is the answer
+		answer := strings.TrimSpace(fullText[answerMatch[1]:])
+		
+		return reasoning, answer
+	}
+	
+	// If we can't find an explicit answer section, try to find the last step
+	stepRegex := regexp.MustCompile(`(?i)(?:#+\s*Step\s+\d+:?)\s*`)
+	stepMatches := stepRegex.FindAllStringIndex(fullText, -1)
+	
+	if len(stepMatches) > 0 {
+		// The last step might contain the answer
+		lastStepIndex := stepMatches[len(stepMatches)-1][0]
+		
+		// Look for a paragraph break after the last step
+		paragraphBreak := -1
+		for i := lastStepIndex + 100; i < len(fullText)-1; i++ {
+			if fullText[i] == '\n' && fullText[i+1] == '\n' {
+				paragraphBreak = i
+				break
+			}
+		}
+		
+		if paragraphBreak != -1 {
+			reasoning := strings.TrimSpace(fullText[:paragraphBreak])
+			answer := strings.TrimSpace(fullText[paragraphBreak+2:])
+			return reasoning, answer
+		} else {
+			// If no clear paragraph break, use the last 1/4 of text as the answer
+			cutPoint := len(fullText) - (len(fullText) / 4)
+			reasoning := strings.TrimSpace(fullText[:cutPoint])
+			answer := strings.TrimSpace(fullText[cutPoint:])
+			return reasoning, answer
+		}
+	}
+	
+	// Last resort: split into first 3/4 (reasoning) and last 1/4 (answer)
+	cutPoint := (len(fullText) * 3) / 4
+	reasoning := strings.TrimSpace(fullText[:cutPoint])
+	answer := strings.TrimSpace(fullText[cutPoint:])
+	
+	return reasoning, answer
 }

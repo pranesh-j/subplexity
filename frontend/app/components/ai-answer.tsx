@@ -1,20 +1,21 @@
 // frontend/app/components/ai-answer.tsx
 import React, { useState } from 'react';
-import { Sparkles, Info, Copy, Check, ExternalLink, Brain } from 'lucide-react';
+import { Sparkles, Info, Copy, Check, ExternalLink, ListChecks, ChevronDown, ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { Citation } from './api-client';
+import { Citation, ReasoningStep } from './api-client';
 import { Button } from './ui/button';
 
 interface AIAnswerProps {
-  reasoning: string;
+  reasoning?: string;
+  reasoningSteps?: ReasoningStep[];
   answer: string;
   citations?: Citation[];
   lastUpdated?: number;
 }
 
-export default function AIAnswer({ reasoning, answer, citations, lastUpdated }: AIAnswerProps) {
+export default function AIAnswer({ reasoning, reasoningSteps, answer, citations, lastUpdated }: AIAnswerProps) {
   const [copied, setCopied] = useState(false);
-  const [showReasoning, setShowReasoning] = useState(false);
+  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
 
   // Process citations
   const processMarkdownWithCitations = (markdown: string): string => {
@@ -46,6 +47,14 @@ export default function AIAnswer({ reasoning, answer, citations, lastUpdated }: 
     await navigator.clipboard.writeText(answer);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Toggle step expansion
+  const toggleStep = (index: number) => {
+    setExpandedSteps(prev => ({
+      ...prev,
+      [index]: !prev[index]
+    }));
   };
 
   // Custom React Markdown components
@@ -125,33 +134,74 @@ export default function AIAnswer({ reasoning, answer, citations, lastUpdated }: 
 
   return (
     <div className="mt-5 space-y-6">
-      {/* Reasoning Section (Collapsible) */}
-      <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden">
-        <button 
-          onClick={() => setShowReasoning(!showReasoning)}
-          className="w-full flex items-center justify-between p-4 bg-neutral-50 dark:bg-neutral-900 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-        >
-          <div className="flex items-center gap-2">
-            <Brain className="size-5 text-blue-500" />
-            <h2 className="text-base font-semibold text-neutral-800 dark:text-neutral-200">
-              AI Reasoning
-            </h2>
+      {/* Step-by-Step Reasoning Section */}
+      {reasoningSteps && reasoningSteps.length > 0 ? (
+        <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden">
+          <div className="p-4 bg-neutral-50 dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-800">
+            <div className="flex items-center gap-2">
+              <ListChecks className="size-5 text-blue-500" />
+              <h2 className="text-base font-semibold text-neutral-800 dark:text-neutral-200">
+                Step-by-Step Reasoning
+              </h2>
+            </div>
           </div>
-          <span className="text-xs text-neutral-500">
-            {showReasoning ? "Hide" : "Show"} reasoning process
-          </span>
-        </button>
-        
-        {showReasoning && reasoning && (
-          <div className="p-4 bg-neutral-50/50 dark:bg-neutral-900/50 border-t border-neutral-200 dark:border-neutral-800">
+          
+          <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+            {reasoningSteps.map((step, index) => (
+              <div key={index} className="bg-white dark:bg-neutral-900">
+                <button
+                  onClick={() => toggleStep(index)}
+                  className="w-full flex items-center justify-between p-4 text-left hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-semibold text-sm">
+                      {index + 1}
+                    </div>
+                    <h3 className="font-medium text-neutral-800 dark:text-neutral-200">
+                      {step.title}
+                    </h3>
+                  </div>
+                  
+                  {expandedSteps[index] ? (
+                    <ChevronDown className="h-5 w-5 text-neutral-500" />
+                  ) : (
+                    <ChevronRight className="h-5 w-5 text-neutral-500" />
+                  )}
+                </button>
+                
+                {expandedSteps[index] && (
+                  <div className="p-4 bg-neutral-50/50 dark:bg-neutral-900/50 border-t border-neutral-200 dark:border-neutral-800">
+                    <div className="prose prose-sm max-w-none dark:prose-invert">
+                      <ReactMarkdown components={components}>
+                        {step.content}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : reasoning ? (
+        <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden">
+          <div className="p-4 bg-neutral-50 dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-800">
+            <div className="flex items-center gap-2">
+              <ListChecks className="size-5 text-blue-500" />
+              <h2 className="text-base font-semibold text-neutral-800 dark:text-neutral-200">
+                Reasoning Process
+              </h2>
+            </div>
+          </div>
+          
+          <div className="p-4 bg-white dark:bg-neutral-900">
             <div className="prose prose-sm max-w-none dark:prose-invert">
               <ReactMarkdown components={components}>
                 {reasoning}
               </ReactMarkdown>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      ) : null}
 
       {/* Answer Section */}
       <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-4">

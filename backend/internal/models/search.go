@@ -34,16 +34,23 @@ type Citation struct {
 	Subreddit string `json:"subreddit"`
 }
 
+// ReasoningStep represents a single step in the AI's reasoning process
+type ReasoningStep struct {
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
 // SearchResponse represents the search response with enhanced RAG information
 type SearchResponse struct {
-	Results       []SearchResult  `json:"results"`
-	TotalCount    int             `json:"totalCount"`
-	Reasoning     string          `json:"reasoning,omitempty"`
-	Answer        string          `json:"answer,omitempty"`
-	Citations     []Citation      `json:"citations,omitempty"`
-	ElapsedTime   float64         `json:"elapsedTime"`
-	LastUpdated   int64           `json:"lastUpdated"` // Unix timestamp of data freshness
-	RequestParams RequestParams   `json:"requestParams,omitempty"`
+	Results        []SearchResult  `json:"results"`
+	TotalCount     int             `json:"totalCount"`
+	Reasoning      string          `json:"reasoning,omitempty"`
+	ReasoningSteps []ReasoningStep `json:"reasoningSteps,omitempty"`
+	Answer         string          `json:"answer,omitempty"`
+	Citations      []Citation      `json:"citations,omitempty"`
+	ElapsedTime    float64         `json:"elapsedTime"`
+	LastUpdated    int64           `json:"lastUpdated"` // Unix timestamp of data freshness
+	RequestParams  RequestParams   `json:"requestParams,omitempty"`
 }
 
 // RequestParams captures the original request parameters for reference
