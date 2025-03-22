@@ -6,6 +6,8 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -20,23 +22,32 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Capture OS signals for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		log.Println("Shutdown signal received")
+		cancel()
+	}()
+
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
 		log.Println("Warning: No .env file found, using environment variables")
 	}
 
 	// Get required environment variables
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
+	port := getEnvWithDefault("PORT", "8080")
 	redditClientID := os.Getenv("REDDIT_API_CLIENT_ID")
 	redditClientSecret := os.Getenv("REDDIT_API_CLIENT_SECRET")
 
+	// Check for API credentials
 	if redditClientID == "" || redditClientSecret == "" {
 		log.Println("Warning: Reddit API credentials not set. Set REDDIT_API_CLIENT_ID and REDDIT_API_CLIENT_SECRET environment variables")
 	}
+
+	// Check for AI model API keys
+	checkAICredentials()
 
 	// Initialize services
 	redditService := services.NewRedditService(redditClientID, redditClientSecret)
@@ -65,18 +76,23 @@ func main() {
 	api := r.Group("/api")
 	{
 		api.POST("/search", func(c *gin.Context) {
-			// Pass the request context to ensure proper cancellation
-			searchHandler.HandleSearch(c)
+			// Create a request-specific context that will be canceled when the request is complete
+			reqCtx, reqCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer reqCancel()
+			
+			// Pass the request context to the handler
+			searchHandler.HandleSearch(c.Copy().Request.WithContext(reqCtx))
+		})
+		
+		// Add health check endpoint
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"status":      "ok",
+				"time":        time.Now().Format(time.RFC3339),
+				"reddit_auth": redditService.GetAuthStatus(),
+			})
 		})
 	}
-
-	// Health check endpoint
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"status": "ok",
-			"time":   time.Now().Format(time.RFC3339),
-		})
-	})
 
 	// Start server with graceful shutdown
 	log.Printf("Server starting on port %s\n", port)
@@ -88,8 +104,63 @@ func main() {
 		}
 	}()
 
-	// Start the server
-	if err := r.Run(":" + port); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	// Create and start the server with graceful shutdown
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
+	}
+	
+	// Start server in a goroutine so it doesn't block shutdown
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+	
+	// Wait for context cancellation (from signal or other shutdown trigger)
+	<-ctx.Done()
+	
+	// Create a timeout context for shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	
+	// Attempt graceful shutdown
+	log.Println("Shutting down server...")
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("Server shutdown error: %v", err)
+	}
+	
+	log.Println("Server gracefully stopped")
+}
+
+// getEnvWithDefault returns the value of an environment variable or a default value
+func getEnvWithDefault(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
+
+// checkAICredentials checks if AI model API keys are set and logs warnings
+func checkAICredentials() {
+	// Check for Anthropic API key
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		log.Println("Warning: ANTHROPIC_API_KEY not set. Claude model will use mock responses.")
+	}
+	
+	// Check for OpenAI API key
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		log.Println("Warning: OPENAI_API_KEY not set. GPT models will use mock responses.")
+	}
+	
+	// Check for Google AI API key
+	if os.Getenv("GOOGLE_API_KEY") == "" {
+		log.Println("Warning: GOOGLE_API_KEY not set. Gemini models will use mock responses.")
+	}
+	
+	// Check for DeepSeek API key
+	if os.Getenv("DEEPSEEK_API_KEY") == "" {
+		log.Println("Warning: DEEPSEEK_API_KEY not set. DeepSeek models will use mock responses.")
 	}
 }
