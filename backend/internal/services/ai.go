@@ -434,7 +434,13 @@ func (s *AIService) callAnthropicAPI(ctx context.Context, prompt string, modelCo
     return resultText, nil
 }
 
-// Also fix the callGoogleAPI function
+// This is the updated callGoogleAPI function to fix the API integration
+// Replace the existing function in backend/internal/services/ai.go
+
+
+// This is the updated callGoogleAPI function to fix the API integration
+// Replace the existing function in backend/internal/services/ai.go
+
 func (s *AIService) callGoogleAPI(ctx context.Context, prompt string, modelConfig *AIModelConfig) (string, error) {
     // Get API configuration from environment
     apiKey := os.Getenv("GOOGLE_API_KEY")
@@ -443,37 +449,32 @@ func (s *AIService) callGoogleAPI(ctx context.Context, prompt string, modelConfi
         return s.generateMockResponse(prompt), nil
     }
     
-    // Prepare request
+    // Prepare request - Using the correct structure for Gemini 2.0 API
+    type googlePart struct {
+        Text string `json:"text"`
+    }
+    
     type googleContent struct {
-        Parts []struct {
-            Text string `json:"text"`
-        } `json:"parts"`
+        Parts []googlePart `json:"parts"`
     }
     
     type googleRequest struct {
-        Contents    []googleContent `json:"contents"`
-        Model       string          `json:"model"`
-        // Updated field names to match Google API
-        Temperature     float32         `json:"temperature"`
-        MaxOutputTokens int             `json:"max_output_tokens"`
+        Contents []googleContent `json:"contents"`
+        Model    string          `json:"model"`
     }
     
-    // Determine model name based on configuration
-    modelName := "Gemini 2.0 Flash" // Default model
+    // The model identifier for Gemini 2.0 Flash
+    modelIdentifier := "gemini-2.0-flash"
     
     request := googleRequest{
         Contents: []googleContent{
             {
-                Parts: []struct {
-                    Text string `json:"text"`
-                }{
+                Parts: []googlePart{
                     {Text: prompt},
                 },
             },
         },
-        Model:           modelName,
-        Temperature:     modelConfig.Temperature,
-        MaxOutputTokens: modelConfig.MaxTokens,
+        Model: modelIdentifier,
     }
     
     // Marshal request to JSON
@@ -482,8 +483,9 @@ func (s *AIService) callGoogleAPI(ctx context.Context, prompt string, modelConfi
         return "", fmt.Errorf("error marshaling request: %w", err)
     }
     
-    // Create HTTP request
-    apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", modelName, apiKey)
+    // Create HTTP request with the correct endpoint for Gemini 2.0
+    apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1/models/%s:generateContent?key=%s", 
+                         modelIdentifier, apiKey)
     req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(requestBody))
     if err != nil {
         return "", fmt.Errorf("error creating request: %w", err)
@@ -493,7 +495,7 @@ func (s *AIService) callGoogleAPI(ctx context.Context, prompt string, modelConfi
     req.Header.Set("Content-Type", "application/json")
     
     // Make the request
-    client := &http.Client{Timeout: 50 * time.Second} // Increased timeout
+    client := &http.Client{Timeout: 50 * time.Second}
     resp, err := client.Do(req)
     if err != nil {
         return "", fmt.Errorf("error making request to Google API: %w", err)
@@ -509,7 +511,7 @@ func (s *AIService) callGoogleAPI(ctx context.Context, prompt string, modelConfi
         return "", fmt.Errorf("error response from Google API (status %d): %s", resp.StatusCode, string(bodyBytes))
     }
     
-    // Parse response
+    // Parse response for the Gemini 2.0 structure
     var response struct {
         Candidates []struct {
             Content struct {
@@ -538,6 +540,7 @@ func (s *AIService) callGoogleAPI(ctx context.Context, prompt string, modelConfi
     
     return resultText, nil
 }
+
 
 // callOpenAIAPI makes API calls to OpenAI models
 func (s *AIService) callOpenAIAPI(ctx context.Context, prompt string, modelConfig *AIModelConfig) (string, error) {

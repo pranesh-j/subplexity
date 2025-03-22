@@ -3,6 +3,7 @@
 package utils
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -59,7 +60,7 @@ type QueryParams struct {
 	QuantityRequested int                  // If query requests a specific number of results (e.g., "top 5")
 }
 
-// Improved ParseQuery function that's completely domain-agnostic
+// Enhanced ParseQuery function to better handle ranking and time-sensitive queries
 func ParseQuery(query string) QueryParams {
 	params := QueryParams{
 		Intent:           GeneralIntent,
@@ -100,20 +101,21 @@ func ParseQuery(query string) QueryParams {
 		}
 	}
 	
-	// Generic temporal terms detection without hardcoding domains
+	// Enhanced temporal terms detection - more comprehensive
 	temporalTerms := []string{
 		"now", "current", "currently", "today", "tonight", 
 		"this week", "this month", "this year", "recent",
 		"latest", "right now", "presently", "at the moment",
+		"nowadays", "trending", "present", "2024", "2025",
 	}
 	
-	// Check for time sensitivity
+	// Check for time sensitivity with improved precision
 	for _, term := range temporalTerms {
 		if strings.Contains(queryLower, term) {
 			params.IsTimeSensitive = true
 			
 			// Set appropriate TimeFrame based on term
-			if strings.Contains(term, "year") {
+			if strings.Contains(term, "year") || term == "2024" || term == "2025" {
 				params.TimeFrame = "year"
 			} else if strings.Contains(term, "month") {
 				params.TimeFrame = "month"
@@ -131,12 +133,18 @@ func ParseQuery(query string) QueryParams {
 		}
 	}
 	
-	// Detect ranking/listing intent (non-domain-specific)
-	rankingTerms := []string{"top", "best", "greatest", "worst", "highest", "lowest", "most", "least", "ranking", "ranked"}
+	// Enhanced ranking term detection
+	rankingTerms := []string{
+		"top", "best", "greatest", "worst", "highest", "lowest", 
+		"most", "least", "ranking", "ranked", "popular", "favorite",
+		"essential", "must-see", "must-watch", "must-play", "must-read",
+	}
+	
+	// More sophisticated ranking detection that looks for full terms
 	for _, term := range rankingTerms {
-		if strings.Contains(queryLower, " "+term+" ") || // term with spaces around it
-		   strings.HasPrefix(queryLower, term+" ") || // term at beginning
-		   strings.HasSuffix(queryLower, " "+term) { // term at end
+		// Look for the term as a whole word, not just a substring
+		termPattern := fmt.Sprintf(`\b%s\b`, term)
+		if regexp.MustCompile(termPattern).MatchString(queryLower) {
 			params.HasRankingAspect = true
 			params.RelevanceFactors["engagement"] = 1.5 // Prioritize highly-engaged content
 			
@@ -150,28 +158,58 @@ func ParseQuery(query string) QueryParams {
 			if strings.Contains(queryLower, "top") {
 				params.SortBy = "top"
 			} else if strings.Contains(queryLower, "best") {
-				params.SortBy = "best"
+				params.SortBy = "relevance" // "best" in Reddit is a comment sort
 			}
 			break
 		}
 	}
 	
-	// Detect trending intent (without changing existing code)
-	trendingTerms := []string{"trending", "popular", "hot", "viral"}
+	// Improved quantity detection for ranking queries
+	quantityRegex := regexp.MustCompile(`\b(top|best|worst)\s+(\d+)\b`)
+	quantityMatch := quantityRegex.FindStringSubmatch(queryLower)
+	if len(quantityMatch) > 2 {
+		// Parse the number (ignoring errors, defaulting to 0)
+		quantity, _ := strconv.Atoi(quantityMatch[2])
+		params.QuantityRequested = quantity
+	}
+	
+	// Also look for number words - fixed duplicate keys
+	numberWords := map[string]int{
+		"five": 5, 
+		"ten": 10, 
+		"fifteen": 15, 
+		"twenty": 20,
+		"three": 3, 
+		"seven": 7,
+	}
+	
+	for word, num := range numberWords {
+		wordPattern := fmt.Sprintf(`\b(top|best)\s+%s\b`, word)
+		if regexp.MustCompile(wordPattern).MatchString(queryLower) {
+			params.QuantityRequested = num
+			break
+		}
+	}
+	
+	// Check for trending intent with more signals
+	trendingTerms := []string{"trending", "popular", "hot", "viral", "blowing up", "going viral"}
 	for _, term := range trendingTerms {
 		if strings.Contains(queryLower, term) {
 			params.Intent = TrendingIntent
 			if term == "hot" {
 				params.SortBy = "hot"
-			} else if term == "new" {
-				params.SortBy = "new" 
+			} else if term == "popular" {
+				params.SortBy = "top" 
 			}
 			break
 		}
 	}
 	
-	// Check for comparison intent
-	comparisonTerms := []string{"vs", "versus", "compared to", "difference between", "better than"}
+	// Enhanced comparison intent detection
+	comparisonTerms := []string{
+		"vs", "versus", "compared to", "difference between", "better than",
+		"or", "alternative to", "similar to", "which is better",
+	}
 	for _, term := range comparisonTerms {
 		if strings.Contains(queryLower, term) {
 			params.Intent = ComparisonIntent
@@ -181,24 +219,15 @@ func ParseQuery(query string) QueryParams {
 		}
 	}
 	
-	// Detect specific content type intent (without changes)
+	// Detect specific content type intent with more signals
 	if len(params.Subreddits) > 0 {
 		params.Intent = SubredditIntent
-	} else if strings.Contains(queryLower, "comment") {
+	} else if regexp.MustCompile(`\bcomment(s|ing)?\b`).MatchString(queryLower) {
 		params.Intent = CommentIntent
-	} else if strings.Contains(queryLower, "post") || strings.Contains(queryLower, "thread") {
+	} else if regexp.MustCompile(`\b(post|thread|submission)(s|ed|ing)?\b`).MatchString(queryLower) {
 		params.Intent = PostIntent
 	} else if len(params.Authors) > 0 {
 		params.Intent = UserIntent
-	}
-	
-	// Look for quantity specifications (e.g., "top 5", "best 10")
-	quantityRegex := regexp.MustCompile(`\b(top|best|worst)\s+(\d+)\b`)
-	quantityMatch := quantityRegex.FindStringSubmatch(queryLower)
-	if len(quantityMatch) > 2 {
-		// Parse the number (ignoring errors, defaulting to 0)
-		quantity, _ := strconv.Atoi(quantityMatch[2])
-		params.QuantityRequested = quantity
 	}
 	
 	// Extract keywords (all remaining terms)
@@ -219,26 +248,52 @@ func ParseQuery(query string) QueryParams {
 	// Create filtered keywords (important terms only)
 	params.FilteredKeywords = FilterKeywords(params.Keywords)
 	
-	// Detect general categories from keywords (domain-agnostic)
+	// Detect general categories from keywords
 	params.QueryCategories = DetectCategories(params.FilteredKeywords)
 	
 	return params
 }
 
-// DetectCategories identifies general topic categories without hardcoding specific responses
+// FilterKeywords removes stop words and keeps only meaningful terms
+func FilterKeywords(keywords []string) []string {
+	var filtered []string
+	
+	for _, word := range keywords {
+		if len(word) > 2 && !StopWords[word] {
+			filtered = append(filtered, word)
+		}
+	}
+	
+	return filtered
+}
+
+// DetectCategories identifies general topic categories from keywords without hardcoding specific responses
 func DetectCategories(keywords []string) []string {
 	// Topic category maps (expandable, but domain-agnostic)
 	categoryKeywords := map[string][]string{
-		"technology": {"tech", "software", "hardware", "app", "computer", "digital", "device", "code", "program"},
-		"entertainment": {"show", "movie", "film", "tv", "television", "series", "episode", "watch", "stream"},
-		"gaming": {"game", "gaming", "play", "player", "console", "ps5", "xbox", "nintendo", "steam"},
-		"sports": {"team", "player", "match", "sport", "league", "championship", "tournament", "game"},
-		"science": {"science", "scientific", "research", "study", "experiment", "theory", "discovery"},
-		"finance": {"money", "stock", "invest", "finance", "financial", "market", "trade", "crypto", "bitcoin"},
-		"health": {"health", "medical", "doctor", "medicine", "symptom", "treatment", "diet", "exercise"},
-		"food": {"food", "recipe", "cook", "cooking", "restaurant", "meal", "dish", "ingredient"},
-		"travel": {"travel", "trip", "vacation", "destination", "hotel", "flight", "visit", "tour"},
-		"education": {"learn", "school", "college", "university", "course", "study", "education", "academic"},
+		"technology": {"tech", "software", "hardware", "app", "computer", "digital", "device", "code", "program", "programming", "javascript", "python", "golang", "algorithm", "data", "cloud", "server", "api", "mobile", "web", "developer"},
+		
+		"entertainment": {"show", "movie", "film", "tv", "television", "series", "episode", "watch", "stream", "actor", "actress", "director", "character", "plot", "scene", "season", "netflix", "hulu", "disney", "hbo", "amazon", "comedy", "drama"},
+		
+		"gaming": {"game", "gaming", "play", "player", "console", "ps5", "xbox", "nintendo", "steam", "fps", "rpg", "mmorpg", "strategy", "puzzle", "minecraft", "fortnite", "character", "level", "quest", "achievement", "multiplayer", "esports"},
+		
+		"sports": {"team", "player", "match", "sport", "league", "championship", "tournament", "game", "score", "coach", "athlete", "basketball", "football", "soccer", "baseball", "hockey", "tennis", "golf", "olympics", "nfl", "nba", "mlb"},
+		
+		"science": {"science", "scientific", "research", "study", "experiment", "theory", "discovery", "biology", "chemistry", "physics", "astronomy", "space", "earth", "environment", "climate", "laboratory", "scientist", "hypothesis", "data"},
+		
+		"finance": {"money", "stock", "invest", "finance", "financial", "market", "trade", "crypto", "bitcoin", "ethereum", "dividend", "retirement", "saving", "budget", "loan", "mortgage", "credit", "debt", "bank", "portfolio", "fund"},
+		
+		"health": {"health", "medical", "doctor", "medicine", "symptom", "treatment", "diet", "exercise", "fitness", "wellness", "mental", "anxiety", "depression", "therapy", "workout", "nutrition", "vitamin", "protein", "disease", "condition"},
+		
+		"food": {"food", "recipe", "cook", "cooking", "restaurant", "meal", "dish", "ingredient", "kitchen", "chef", "bake", "dessert", "dinner", "lunch", "breakfast", "flavor", "cuisine", "taste", "delicious", "pizza", "burger", "vegan"},
+		
+		"travel": {"travel", "trip", "vacation", "destination", "hotel", "flight", "visit", "tour", "country", "city", "beach", "mountain", "hiking", "backpacking", "resort", "cruise", "passport", "tourism", "sight", "landmark", "adventure"},
+		
+		"education": {"learn", "school", "college", "university", "course", "study", "education", "academic", "student", "teacher", "professor", "degree", "major", "class", "lecture", "exam", "homework", "textbook", "curriculum", "grade"},
+		
+		"politics": {"politics", "government", "election", "vote", "president", "congress", "senate", "democrat", "republican", "liberal", "conservative", "policy", "law", "regulation", "campaign", "political", "candidate", "ballot", "debate"},
+		
+		"relationships": {"relationship", "dating", "marriage", "partner", "boyfriend", "girlfriend", "husband", "wife", "divorce", "breakup", "family", "friend", "romantic", "love", "couple", "wedding", "engagement", "conflict", "communication"},
 	}
 	
 	// Detect categories from keywords
@@ -268,17 +323,4 @@ func DetectCategories(keywords []string) []string {
 	})
 	
 	return categories
-}
-
-// FilterKeywords removes stop words and keeps only meaningful terms
-func FilterKeywords(keywords []string) []string {
-	var filtered []string
-	
-	for _, word := range keywords {
-		if len(word) > 2 && !StopWords[word] {
-			filtered = append(filtered, word)
-		}
-	}
-	
-	return filtered
 }

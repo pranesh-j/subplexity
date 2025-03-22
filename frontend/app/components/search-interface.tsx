@@ -182,11 +182,11 @@ export function SearchInterface() {
               value={modelName}
               onValueChange={setModelName}
             >
-              <SelectTrigger className="w-[130px] border-zinc-700 bg-zinc-800/50 text-sm flex-shrink-0 hover:bg-zinc-800 hover:text-white transition-colors">
+              <SelectTrigger className="w-[150px] border-zinc-700 bg-zinc-800/50 text-sm flex-shrink-0 hover:bg-zinc-800 hover:text-white transition-colors">
                 <SelectValue placeholder="Select Model" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="Google Gemini">Google Gemini</SelectItem>
+                <SelectItem value="Google Gemini">Gemini 2.0 Flash</SelectItem>
                 <SelectItem value="Claude">Claude</SelectItem>
                 <SelectItem value="DeepSeek R1">DeepSeek R1</SelectItem>
               </SelectContent>

@@ -23,7 +23,10 @@ type AIModelConfig struct {
 	QueryWeights       map[string]float32 // Weight different query complexities
 }
 
-// loadModelConfigurations returns configuration for available AI models
+
+// This update needs to be applied to the loadModelConfigurations function
+// in backend/internal/services/ai_models.go
+
 func loadModelConfigurations() map[string]*AIModelConfig {
 	configs := map[string]*AIModelConfig{
 		"Claude": {
@@ -85,7 +88,7 @@ func loadModelConfigurations() map[string]*AIModelConfig {
 				"answer_end":      "END_ANSWER",
 			},
 			ResponseFormat: "markdown",
-			TokenLimit:     65536,
+			TokenLimit:     128000, // Updated for Gemini 2.0 Flash
 			QueryWeights: map[string]float32{
 				"analytical": 1.1,
 				"technical":  1.0,
