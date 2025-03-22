@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp" // Add this for regexp functions
+	"sort"   // Add this for sorting functions
 	"strconv" // Add this for string conversion
 	"sync"
 	"strings"
@@ -390,99 +391,6 @@ func (s *RedditService) timeAwareSearch(ctx context.Context, params utils.QueryP
     return allResults, nil
 }
 
-// New method to create a dynamic search strategy
-func (s *RedditService) createSearchStrategy(params utils.QueryParams, searchMode string, limit int) *SearchStrategy {
-    strategy := &SearchStrategy{
-        Vectors: make([]SearchVector, 0),
-        Limit:   limit,
-    }
-    
-    // Standard search vector - always included
-    standardVector := &StandardSearchVector{
-        Query:      params.OriginalQuery,
-        SearchMode: searchMode,
-        Limit:      limit,
-    }
-    strategy.Vectors = append(strategy.Vectors, standardVector)
-    
-    // Add time-sensitive search vectors if needed
-    if params.IsTimeSensitive {
-        // Add vectors for hot/new content
-        hotVector := &SortedContentVector{
-            Keywords:  params.Keywords,
-            SortType:  "hot",
-            TimeFrame: params.TimeFrame,
-            Limit:     limit,
-        }
-        strategy.Vectors = append(strategy.Vectors, hotVector)
-        
-        newVector := &SortedContentVector{
-            Keywords:  params.Keywords,
-            SortType:  "new",
-            TimeFrame: params.TimeFrame,
-            Limit:     limit,
-        }
-        strategy.Vectors = append(strategy.Vectors, newVector)
-    }
-    
-    // Add trend analysis vector for ranking queries
-    if strings.Contains(strings.ToLower(params.OriginalQuery), "top") ||
-       strings.Contains(strings.ToLower(params.OriginalQuery), "best") ||
-       strings.Contains(strings.ToLower(params.OriginalQuery), "popular") {
-        
-        trendVector := &TrendAnalysisVector{
-            Keywords:  params.Keywords,
-            TimeFrame: params.TimeFrame,
-            Limit:     limit,
-        }
-        strategy.Vectors = append(strategy.Vectors, trendVector)
-    }
-    
-    return strategy
-}
-
-// Execute the search strategy
-func (s *RedditService) executeSearchStrategy(ctx context.Context, strategy *SearchStrategy) ([]models.SearchResult, error) {
-    var allResults []models.SearchResult
-    var mu sync.Mutex
-    var wg sync.WaitGroup
-    var firstError error
-    
-    for _, vector := range strategy.Vectors {
-        wg.Add(1)
-        go func(v SearchVector) {
-            defer wg.Done()
-            
-            // Execute the search vector
-            results, err := v.Execute(ctx, s)
-            
-            mu.Lock()
-            defer mu.Unlock()
-            
-            if err != nil {
-                if firstError == nil {
-                    firstError = err
-                }
-                return
-            }
-            
-            // Add results to the combined list
-            allResults = append(allResults, results...)
-        }(vector)
-    }
-    
-    wg.Wait()
-    
-    // Return results even if some vectors failed
-    if len(allResults) > 0 {
-        return allResults, nil
-    }
-    
-    // Only return error if we have no results
-    return nil, firstError
-}
-
-
 // rankingFocusedSearch handles queries focusing on rankings (top, best, etc.)
 func (s *RedditService) rankingFocusedSearch(ctx context.Context, params utils.QueryParams, searchType string, limit int) ([]models.SearchResult, error) {
     // Create a context with timeout
@@ -666,8 +574,6 @@ func (s *RedditService) rankingFocusedSearch(ctx context.Context, params utils.Q
     return allResults, nil
 }
 
-// Add this function to backend/internal/services/reddit.go
-
 // enhanceSearchForRankingQueries specially handles ranking-based queries like "top 5 shows"
 func (s *RedditService) enhanceSearchForRankingQueries(ctx context.Context, params utils.QueryParams, limit int) ([]models.SearchResult, error) {
     // Create a context with timeout
@@ -729,62 +635,61 @@ func (s *RedditService) enhanceSearchForRankingQueries(ctx context.Context, para
     searchCount := 0
     
     // Strategy 1: Search with explicit ranking terms in top-rated content
-// Search with explicit ranking terms in top-rated content
-	searchCount++
-	go func() {
-		// For each target subreddit, search their top content
-		var allResults []models.SearchResult
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		
-		for _, sr := range relevantSubreddits {
-			wg.Add(1)
-			go func(subreddit string) {
-				defer wg.Done()
-				
-				// Build query parameters for top content in this subreddit
-				queryParams := url.Values{}
-				queryParams.Set("limit", fmt.Sprintf("%d", limit/len(relevantSubreddits)))
-				
-				// If time sensitive, use appropriate timeframe
-				if params.IsTimeSensitive {
-					queryParams.Set("t", params.TimeFrame)
-				} else {
-					queryParams.Set("t", "month") // Default to last month for ranking queries
-				}
-				
-				// Search for top content in this subreddit
-				endpoint := fmt.Sprintf("/r/%s/top.json?%s", subreddit, queryParams.Encode())
-				results, err := s.executeSearchRequest(ctx, endpoint)
-				if err != nil {
-					log.Printf("Error searching top content in r/%s: %v", subreddit, err)
-					return
-				}
-				
-				// Filter results for relevance
-				var filtered []models.SearchResult
-				for _, result := range results {
-					// Enhance the relevance checking for this specific query type
-					isRelevant := s.isRelevantRankingResult(result, params.FilteredKeywords, params.QuantityRequested)
-					if isRelevant {
-						filtered = append(filtered, result)
-					}
-				}
-				
-				mu.Lock()
-				allResults = append(allResults, filtered...)
-				mu.Unlock()
-			}(sr)
-		}
-		
-		wg.Wait()
-		
-		if len(allResults) > 0 {
-			searchResults <- allResults
-		} else {
-			errorResults <- errors.New("no relevant results found in targeted subreddits")
-		}
-	}()
+    searchCount++
+    go func() {
+        // For each target subreddit, search their top content
+        var allResults []models.SearchResult
+        var mu sync.Mutex
+        var wg sync.WaitGroup
+        
+        for _, sr := range relevantSubreddits {
+            wg.Add(1)
+            go func(subreddit string) {
+                defer wg.Done()
+                
+                // Build query parameters for top content in this subreddit
+                queryParams := url.Values{}
+                queryParams.Set("limit", fmt.Sprintf("%d", limit/len(relevantSubreddits)))
+                
+                // If time sensitive, use appropriate timeframe
+                if params.IsTimeSensitive {
+                    queryParams.Set("t", params.TimeFrame)
+                } else {
+                    queryParams.Set("t", "month") // Default to last month for ranking queries
+                }
+                
+                // Search for top content in this subreddit
+                endpoint := fmt.Sprintf("/r/%s/top.json?%s", subreddit, queryParams.Encode())
+                results, err := s.executeSearchRequest(ctx, endpoint)
+                if err != nil {
+                    log.Printf("Error searching top content in r/%s: %v", subreddit, err)
+                    return
+                }
+                
+                // Filter results for relevance
+                var filtered []models.SearchResult
+                for _, result := range results {
+                    // Enhance the relevance checking for this specific query type
+                    isRelevant := s.isRelevantRankingResult(result, params.FilteredKeywords, params.QuantityRequested)
+                    if isRelevant {
+                        filtered = append(filtered, result)
+                    }
+                }
+                
+                mu.Lock()
+                allResults = append(allResults, filtered...)
+                mu.Unlock()
+            }(sr)
+        }
+        
+        wg.Wait()
+        
+        if len(allResults) > 0 {
+            searchResults <- allResults
+        } else {
+            errorResults <- errors.New("no relevant results found in targeted subreddits")
+        }
+    }()
     
     // Strategy 2: Standard search with optimized query
     searchCount++
@@ -1067,7 +972,7 @@ func rankResultsForRankingQuery(results []models.SearchResult, params utils.Quer
             
             // Heavily prioritize recent content for time-sensitive queries
             if ageInDays < 7 {
-                score += 200 - (ageInDays * 25) // Decreases from 200 to 25 over a week
+                score += 200.0 - (float64(ageInDays) * 25.0)  // Decreases from 200 to 25 over a week
             }
         }
         
@@ -1099,9 +1004,6 @@ func rankResultsForRankingQuery(results []models.SearchResult, params utils.Quer
     
     return sortedResults
 }
-
-
-
 
 // parallelSearch executes multiple search strategies in parallel
 func (s *RedditService) parallelSearch(ctx context.Context, params utils.QueryParams, searchType string, limit int) ([]models.SearchResult, error) {
@@ -1216,9 +1118,6 @@ func (s *RedditService) searchPosts(ctx context.Context, params utils.QueryParam
 	return s.executeSearchRequest(ctx, endpoint)
 }
 
-
-
-
 // searchComments searches for comments that match the query
 func (s *RedditService) searchComments(ctx context.Context, params utils.QueryParams, limit int) ([]models.SearchResult, error) {
 	// Build search query
@@ -1280,10 +1179,6 @@ func (s *RedditService) searchUserContent(ctx context.Context, params utils.Quer
 	endpoint := fmt.Sprintf("/user/%s.json?%s", author, queryParams.Encode())
 	return s.executeSearchRequest(ctx, endpoint)
 }
-
-
-
-
 
 // searchTrending searches for trending content
 func (s *RedditService) searchTrending(ctx context.Context, params utils.QueryParams, limit int) ([]models.SearchResult, error) {
@@ -1367,10 +1262,6 @@ func (s *RedditService) searchTrending(ctx context.Context, params utils.QueryPa
 
 	return allResults, nil
 }
-
-
-
-
 
 // executeSearchRequest performs the actual HTTP request to the Reddit API
 func (s *RedditService) executeSearchRequest(ctx context.Context, endpoint string) ([]models.SearchResult, error) {
