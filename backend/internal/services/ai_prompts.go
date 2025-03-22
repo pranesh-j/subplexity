@@ -8,14 +8,15 @@ import (
 	"time"
 
 	"github.com/pranesh-j/subplexity/internal/models"
+	"github.com/pranesh-j/subplexity/internal/utils"
 )
 
 // loadPromptTemplates returns the templates for AI prompts
 func loadPromptTemplates() map[string]string {
 	templates := make(map[string]string)
 	
-	// Default template (used as fallback)
-	templates["default"] = `You are an AI assistant specialized in analyzing Reddit content to answer user queries.
+	// Default template (used as fallback) - Enhanced to be domain-agnostic
+	templates["default"] = `You are an AI assistant specialized in analyzing Reddit content to answer user queries. You provide unbiased, balanced answers based only on the search results provided.
 
 USER QUERY: {{QUERY}}
 
@@ -30,17 +31,21 @@ Follow these strict guidelines:
 1. First, carefully analyze the search results and extract relevant information.
 2. Identify the most credible and relevant sources among the results.
 3. Note any conflicts or agreements between different sources.
-4. Then provide a direct answer to the query based on the search results.
-5. Use [1], [2], etc. to cite specific results when making claims.
-6. DO NOT make up information not present in the results.
-7. Format your response with the following structure EXACTLY:
+4. Consider the time relevance of each result in relation to the query.
+5. If the results don't provide enough information to fully answer the query, be honest and transparent about this limitation.
+6. Provide a direct answer to the query based on the search results.
+7. Use [1], [2], etc. to cite specific results when making claims.
+8. DO NOT invent information not present in the results.
+9. When ranking or listing items, consider factors like community consensus, upvotes, and comment engagement.
+10. If the query is time-sensitive (e.g., asking about "now" or "current"), prioritize recent results and clearly state when the information is from.
+11. Format your response with the following structure EXACTLY:
 
 BEGIN_REASONING
-[Provide your detailed analysis of the search results here. This section is for your reasoning process. Include evaluation of sources, conflicts between sources, and how you arrived at your conclusions.]
+[Provide your detailed analysis of the search results here. This section is for your reasoning process. Include evaluation of sources, conflicts between sources, and how you arrived at your conclusions. Assess the reliability of the results and how well they address the query.]
 END_REASONING
 
 BEGIN_ANSWER
-[Provide a clear, direct answer to the query here. Use citations to reference specific search results. Format in markdown for better readability. Be concise but comprehensive.]
+[Provide a clear, direct answer to the query here. Use citations to reference specific search results. Format in markdown for better readability. Be concise but comprehensive. If the available results don't adequately answer the query, acknowledge this limitation clearly.]
 END_ANSWER`
 
 	// Claude-specific template with improved instructions
@@ -60,7 +65,10 @@ Follow these strict guidelines:
 2. Then provide a direct answer to the query based on the search results.
 3. Use [1], [2], etc. to cite specific results when making claims.
 4. DO NOT make up information not present in the results.
-5. Format your response EXACTLY as shown below:
+5. If the query is time-sensitive (asking about current trends, recent events, etc.), be explicit about the recency of your sources.
+6. If the results don't contain sufficient information to properly answer the query, acknowledge this limitation clearly.
+7. For ranking-type queries (asking for "top", "best", etc.), base your rankings on Reddit engagement metrics and community consensus.
+8. Format your response EXACTLY as shown below:
 
 BEGIN_REASONING
 [Your detailed analysis should include:
@@ -68,7 +76,8 @@ BEGIN_REASONING
 - Identification of consensus and disagreements across sources
 - Analysis of different perspectives presented
 - How you determined what information was most reliable and relevant
-- Any limitations or gaps in the available information]
+- Any limitations or gaps in the available information
+- Consideration of time relevance for time-sensitive queries]
 END_REASONING
 
 BEGIN_ANSWER
@@ -78,7 +87,8 @@ BEGIN_ANSWER
 - Be formatted in markdown for better readability
 - Present information in a structured, organized manner
 - Be comprehensive yet concise
-- Acknowledge limitations or uncertainties when appropriate]
+- Acknowledge limitations or uncertainties when appropriate
+- For ranking queries, explain the basis of your rankings (community consensus, upvotes, expert opinions, etc.)]
 END_ANSWER
 
 EXAMPLE RESPONSE:
@@ -111,7 +121,7 @@ The consensus suggests that remote work productivity benefits are real but not u
 END_ANSWER`
 
 	// DeepSeek-specific template optimized for technical content
-	templates["deepseek"] = `You are an AI assistant specialized in analyzing Reddit content, with particular expertise in technical subjects. Your task is to systematically analyze search results to answer the user's query.
+	templates["deepseek"] = `You are an AI assistant specialized in analyzing Reddit content, with particular expertise in providing accurate, unbiased answers. Your task is to systematically analyze search results to answer the user's query.
 
 USER QUERY: {{QUERY}}
 
@@ -124,19 +134,22 @@ I need you to analyze these results and provide a comprehensive, evidence-based 
 
 Follow these strict guidelines:
 1. Analyze each result carefully, evaluating relevance and credibility 
-2. Extract all technical details and information that helps answer the query
+2. Extract all pertinent details and information that helps answer the query
 3. Structure your thinking methodically and show your reasoning step-by-step
 4. Provide an answer that directly addresses the query using only information from the results
 5. Use precise citations [1], [2], etc. when referencing specific results
 6. DO NOT fabricate information or include facts not present in the results
-7. Format your response EXACTLY as shown below:
+7. For time-sensitive queries (about current trends, recent events, etc.), explicitly note when the information was posted
+8. If the results don't provide sufficient information to answer the query adequately, acknowledge this limitation
+9. For ranking-type queries, use community consensus, upvote patterns, and expert opinions from the results
+10. Format your response EXACTLY as shown below:
 
 BEGIN_REASONING
-[Provide a structured, methodical analysis of the search results here. For technical topics, analyze the accuracy and credibility of technical claims. Identify any technical consensus or disagreements. Evaluate the reliability of sources, especially for technical information.]
+[Provide a structured, methodical analysis of the search results here. Analyze the accuracy and credibility of claims. Identify any consensus or disagreements. Evaluate the reliability of sources and consider the time relevance of different results.]
 END_REASONING
 
 BEGIN_ANSWER
-[Provide a clear, technically accurate answer to the query. Use proper citations ([1], [2], etc.) when referencing information from the results. Format using markdown with appropriate headers, code blocks, and bullet points as needed. Include technical details when relevant, and recognize limitations in the available information.]
+[Provide a clear, accurate answer to the query. Use proper citations ([1], [2], etc.) when referencing information from the results. Format using markdown with appropriate headers, code blocks, and bullet points as needed. Include relevant details, and recognize limitations in the available information.]
 END_ANSWER`
 
 	// Gemini-specific template with structured reasoning steps
@@ -157,7 +170,10 @@ Follow these strict guidelines:
 3. Provide a direct answer to the query using only information from the search results.
 4. Use [1], [2], etc. to cite specific results when making claims.
 5. DO NOT include information that isn't present in the results.
-6. Format your response EXACTLY as follows:
+6. For time-sensitive queries, note the recency and temporal context of the information.
+7. For ranking-type queries, base your rankings on community consensus and engagement metrics visible in the results.
+8. Acknowledge data limitations when the search results don't provide sufficient information.
+9. Format your response EXACTLY as follows:
 
 BEGIN_REASONING
 ## Step 1: Understanding the Query
@@ -213,6 +229,43 @@ func (s *AIService) buildPrompt(query string, results []models.SearchResult, mod
 	prompt = strings.ReplaceAll(prompt, "{{RESULT_COUNT}}", fmt.Sprintf("%d", resultLimit))
 	prompt = strings.ReplaceAll(prompt, "{{TOTAL_RESULT_COUNT}}", fmt.Sprintf("%d", len(results)))
 	
+	// Add query-specific instructions based on analysis
+	params := utils.ParseQuery(query)
+	
+	// Add custom instructions for different query types without hardcoding domains
+	var customInstructions strings.Builder
+	
+	// Time-sensitive query instructions
+	if params.IsTimeSensitive {
+		customInstructions.WriteString("\nADDITIONAL INSTRUCTIONS:\nThis query appears to be time-sensitive, referring to current or recent information. Please:\n")
+		customInstructions.WriteString("- Pay special attention to when each result was posted\n")
+		customInstructions.WriteString("- Prioritize more recent information over older content\n")
+		customInstructions.WriteString("- Explicitly mention the time context of your answer (e.g., \"As of [date]...\")\n")
+		customInstructions.WriteString("- If the results don't include sufficiently recent information, acknowledge this limitation\n")
+	}
+	
+	// Ranking/listing query instructions
+	if params.HasRankingAspect {
+		customInstructions.WriteString("\nADDITIONAL INSTRUCTIONS:\nThis query is requesting a ranking or listing. Please:\n")
+		customInstructions.WriteString("- Base your rankings primarily on evidence from the Reddit results\n")
+		customInstructions.WriteString("- Consider factors like upvotes, comment counts, and community consensus\n")
+		customInstructions.WriteString("- Explain the basis for your rankings in your response\n")
+		customInstructions.WriteString("- If specific quantities are requested (e.g., \"top 5\"), provide exactly that number if the data supports it\n")
+	}
+	
+	// For queries with few results
+	if len(results) < 5 {
+		customInstructions.WriteString("\nADDITIONAL INSTRUCTIONS:\nThere are limited search results available for this query. Please:\n")
+		customInstructions.WriteString("- Be transparent about the limited data available\n")
+		customInstructions.WriteString("- Avoid overextending conclusions beyond what the available data supports\n")
+		customInstructions.WriteString("- Suggest what additional information would be helpful to better answer the query\n")
+	}
+	
+	// Add custom instructions if we have any
+	if customInstructions.Len() > 0 {
+		prompt = strings.Replace(prompt, "==========================", "==========================\n"+customInstructions.String(), 1)
+	}
+	
 	return prompt
 }
 
@@ -261,3 +314,29 @@ func formatResultForPrompt(index int, result models.SearchResult, maxContentLeng
 	
 	return builder.String()
 }
+
+// enhancePromptForQueryType adds query-specific enhancements to the prompt
+func enhancePromptForQueryType(prompt string, params utils.QueryParams) string {
+	// Base prompt remains unchanged
+	enhancedPrompt := prompt
+	
+	// Add appropriate instructions based on query type
+	switch params.Intent {
+	case utils.TimeBasedIntent:
+		enhancedPrompt += "\nNote: This query is time-sensitive. Please prioritize recent information and clearly indicate when the information was posted."
+	case utils.RankingIntent:
+		enhancedPrompt += "\nNote: This query is requesting a ranking. Please base your rankings on community consensus, upvotes, and engagement metrics from the search results."
+	case utils.TrendingIntent:
+		enhancedPrompt += "\nNote: This query is about trending content. Focus on what's currently popular according to the search results, with attention to recency and engagement metrics."
+	case utils.ComparisonIntent:
+		enhancedPrompt += "\nNote: This query is requesting a comparison. Please provide a balanced assessment of the similarities and differences based on the search results."
+	}
+	
+	// Add special handling instructions for limited results
+	if params.IsTimeSensitive {
+		enhancedPrompt += "\nFor time-sensitive queries, explicitly state the recency of your information sources."
+	}
+	
+	return enhancedPrompt
+}
+

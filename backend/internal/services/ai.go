@@ -459,7 +459,7 @@ func (s *AIService) callGoogleAPI(ctx context.Context, prompt string, modelConfi
     }
     
     // Determine model name based on configuration
-    modelName := "gemini-1.5-pro" // Default model
+    modelName := "Gemini 2.0 Flash" // Default model
     
     request := googleRequest{
         Contents: []googleContent{

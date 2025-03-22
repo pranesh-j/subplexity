@@ -221,172 +221,134 @@ func (s *RedditService) processSearchResults(params utils.QueryParams, results [
 	return finalResults
 }
 
-// calculateRelevanceScore computes a relevance score for a search result
+// Completely revamp the calculateRelevanceScore function to be domain-agnostic
 func calculateRelevanceScore(result models.SearchResult, params utils.QueryParams) float64 {
-	// Base scores by content type (these can be tuned)
-	typeBaseScores := map[string]float64{
-		"post":      100.0,
-		"comment":   80.0,
-		"subreddit": 90.0,
-	}
-	
-	// Start with type-based score
-	score := typeBaseScores[result.Type]
-	if score == 0 {
-		score = 70.0 // Default for unknown types
-	}
-	
-	// Check if this is completely unrelated content
-	isRelevant := false
-	
-	// Extract main keywords from query
-	mainKeywords := extractMainKeywords(params.OriginalQuery)
-	
-	// Check if title contains any main keywords
-	titleLower := strings.ToLower(result.Title)
-	contentLower := strings.ToLower(result.Content)
-	
-	for _, keyword := range mainKeywords {
-		if strings.Contains(titleLower, keyword) || strings.Contains(contentLower, keyword) {
-			isRelevant = true
-			score += 50.0
-		}
-	}
-	
-	// If no main keywords are found, severely penalize the score
-	if !isRelevant {
-		score -= 500.0
-	}
-	
-	// Adjust based on query intent and result type match
-	switch params.Intent {
-	case utils.SubredditIntent:
-		if result.Type == "subreddit" {
-			score += 200.0
-		}
-	case utils.PostIntent:
-		if result.Type == "post" {
-			score += 200.0
-		}
-	case utils.CommentIntent:
-		if result.Type == "comment" {
-			score += 200.0
-		}
-	case utils.UserIntent:
-		// Check if result author matches any requested authors
-		for _, author := range params.Authors {
-			if strings.EqualFold(result.Author, author) {
-				score += 200.0
-				break
-			}
-		}
-	}
-	
-	// Keyword matching in title (most important)
-	for _, keyword := range params.Keywords {
-		if strings.Contains(strings.ToLower(result.Title), strings.ToLower(keyword)) {
-			score += 50.0
-			
-			// Extra points for exact matches
-			if strings.Contains(strings.ToLower(result.Title), strings.ToLower(" "+keyword+" ")) {
-				score += 25.0
-			}
-		}
-	}
-	
-	// Keyword matching in content
-	contentMatchCount := 0
-	for _, keyword := range params.Keywords {
-		if strings.Contains(strings.ToLower(result.Content), strings.ToLower(keyword)) {
-			contentMatchCount++
-			score += 30.0
-			
-			// Count occurrences for frequency bonus
-			keywordCount := countOccurrences(result.Content, keyword)
-			if keywordCount > 1 {
-				// Logarithmic bonus for multiple occurrences
-				score += math.Log2(float64(keywordCount)) * 15.0
-			}
-		}
-	}
-	
-	// Bonus for matching all keywords (very relevant content)
-	if contentMatchCount == len(params.Keywords) && len(params.Keywords) > 0 {
-		score += 100.0
-	}
-	
-	// Subreddit matching
-	for _, subreddit := range params.Subreddits {
-		if strings.EqualFold(result.Subreddit, subreddit) {
-			score += 150.0
-			break
-		}
-	}
-	
-	// Popularity factors - use logarithmic scale to prevent very popular content from dominating
-	
-	// Votes matter (more upvotes = community validation)
-	if result.Score > 0 {
-		// Logarithmic scale with diminishing returns
-		upvoteScore := math.Log2(float64(result.Score) + 10.0) * 15.0
-		score += upvoteScore
-	}
-	
-	// Comments indicate engagement
-	if result.CommentCount > 0 {
-		commentScore := math.Log2(float64(result.CommentCount) + 10.0) * 10.0
-		score += commentScore
-	}
-	
-	// Recency is important (newer = more relevant, with decay)
-	ageInDays := (time.Now().Unix() - result.CreatedUTC) / (60 * 60 * 24)
-	
-	// Different decay rates based on content type and age
-	var recencyScore float64
-	
-	switch {
-	case ageInDays < 1: // Last 24 hours - very fresh
-		recencyScore = 200.0
-	case ageInDays < 7: // Last week - fresh
-		recencyScore = 150.0 - (float64(ageInDays) * 10.0)
-	case ageInDays < 30: // Last month - relevant
-		recencyScore = 100.0 - (float64(ageInDays) * 2.0)
-	case ageInDays < 90: // Last 3 months - somewhat relevant
-		recencyScore = 40.0 - (float64(ageInDays-30) * 0.3)
-	case ageInDays < 365: // Last year - less relevant
-		recencyScore = 10.0 - (float64(ageInDays-90) * 0.02)
-	default: // Older - historical
-		recencyScore = 0.0
-	}
-	
-	// For time-based queries, recency is even more important
-	if params.Intent == utils.TimeBasedIntent {
-		recencyScore *= 2.0
-	}
-	
-	score += recencyScore
-	
-	// Content quality factors
-	
-	// Content length factor - more detailed content may be more valuable
-	// But prevent long walls of text from dominating just due to length
-	if len(result.Content) > 0 {
-		// Logarithmic scale with cap
-		contentLengthFactor := math.Min(25.0, math.Log10(float64(len(result.Content)))*5.0)
-		score += contentLengthFactor
-	}
-	
-	// Penalize excluded terms if present
-	for _, excludeTerm := range params.ExcludeTerms {
-		titleAndContent := result.Title + " " + result.Content
-		if strings.Contains(strings.ToLower(titleAndContent), strings.ToLower(excludeTerm)) {
-			score -= 200.0 // Significant penalty
-		}
-	}
-	
-	return score
+    // Base score starts at 100
+    score := 100.0
+    
+    // 1. Content type relevance - weight based on intent, not hardcoded domain
+    switch result.Type {
+    case "post":
+        if params.Intent == utils.PostIntent {
+            score += 100
+        }
+    case "comment":
+        if params.Intent == utils.CommentIntent {
+            score += 100
+        }
+    case "subreddit":
+        if params.Intent == utils.SubredditIntent {
+            score += 100
+        }
+    }
+    
+    // 2. Keyword matching - completely query-dependent
+    titleMatches := 0
+    contentMatches := 0
+    
+    // Count matches in title
+    titleLower := strings.ToLower(result.Title)
+    for _, keyword := range params.FilteredKeywords {
+        if strings.Contains(titleLower, strings.ToLower(keyword)) {
+            titleMatches++
+            score += 30 // High value for title matches
+        }
+    }
+    
+    // Count matches in content
+    contentLower := strings.ToLower(result.Content)
+    for _, keyword := range params.FilteredKeywords {
+        if strings.Contains(contentLower, strings.ToLower(keyword)) {
+            contentMatches++
+            score += 20 // Medium value for content matches
+        }
+    }
+    
+    // Bonus for matching most/all keywords
+    if len(params.FilteredKeywords) > 0 {
+        keywordCoverage := float64(titleMatches+contentMatches) / float64(len(params.FilteredKeywords))
+        score += keywordCoverage * 100 // Up to 100 points for complete coverage
+    }
+    
+    // 3. Temporal relevance - based on query time sensitivity
+    if params.IsTimeSensitive {
+        // Calculate age of the content
+        ageInSeconds := time.Now().Unix() - result.CreatedUTC
+        ageInDays := ageInSeconds / (60 * 60 * 24)
+        
+        // Apply temporal scoring based on timeframe
+        switch params.TimeFrame {
+        case "day":
+            if ageInDays < 1 {
+                score += 300 // Very recent
+            } else if ageInDays < 3 {
+                score += 150 // Recent
+            } else if ageInDays < 7 {
+                score += 50 // Somewhat recent
+            }
+        case "week":
+            if ageInDays < 7 {
+                score += 200 // Within a week
+            } else if ageInDays < 14 {
+                score += 100 // Within two weeks
+            } else if ageInDays < 30 {
+                score += 50 // Within a month
+            }
+        case "month":
+            if ageInDays < 30 {
+                score += 150 // Within a month
+            } else if ageInDays < 60 {
+                score += 75 // Within two months
+            }
+        case "year":
+            if ageInDays < 365 {
+                score += 100 // Within a year
+            }
+        }
+    }
+    
+    // 4. Engagement metrics - universal signals of content quality
+    // Use logarithmic scaling to prevent very popular content from dominating
+    if result.Score > 0 {
+        score += math.Log10(float64(result.Score)+10) * 20
+    }
+    
+    if result.CommentCount > 0 {
+        score += math.Log10(float64(result.CommentCount)+10) * 15
+    }
+    
+    // 5. Apply custom relevance factors from query analysis
+    for factor, weight := range params.RelevanceFactors {
+        switch factor {
+        case "recency":
+            // Already handled above, but could apply multiplier here
+            ageScore := calculateAgeScore(result.CreatedUTC)
+            score += ageScore * weight
+        case "engagement":
+            engagementScore := calculateEngagementScore(result.Score, result.CommentCount)
+            score += engagementScore * weight
+        }
+    }
+    
+    return score
 }
 
+// Helper functions
+func calculateAgeScore(createdUTC int64) float64 {
+    ageInSeconds := time.Now().Unix() - createdUTC
+    ageInDays := ageInSeconds / (60 * 60 * 24)
+    
+    // Inverse logarithmic decay - newer content scores higher
+    if ageInDays == 0 {
+        return 100 // Today
+    }
+    return 100 / (1 + math.Log10(float64(ageInDays)))
+}
+
+func calculateEngagementScore(score int, commentCount int) float64 {
+    // Combined engagement metric
+    return (math.Log10(float64(score)+10) * 2) + (math.Log10(float64(commentCount)+10) * 3)
+}
 // Extract main identifying keywords from the query
 func extractMainKeywords(query string) []string {
 	query = strings.ToLower(query)

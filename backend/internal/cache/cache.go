@@ -286,3 +286,33 @@ func estimateSize(v interface{}) int64 {
 		return 100
 	}
 }
+
+
+
+// GetWithTTL retrieves an item from the cache if it exists and is within a custom TTL
+func (c *Cache) GetWithTTL(key string, maxAge time.Duration) (interface{}, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	element, found := c.items[key]
+	if !found {
+		return nil, false
+	}
+	
+	item := element.Value.(*Item)
+	
+	// Check if item has expired according to its original expiration
+	if item.Expiration < time.Now().UnixNano() {
+		return nil, false
+	}
+	
+	// Check if item is too old based on the custom maxAge
+	if time.Now().UnixNano() - (item.Expiration - int64(c.defaultTTL)) > int64(maxAge) {
+		return nil, false
+	}
+	
+	// Move to front (recently used)
+	c.evictList.MoveToFront(element)
+	
+	return item.Value, true
+}
