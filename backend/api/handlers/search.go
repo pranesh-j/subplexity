@@ -1,12 +1,11 @@
-// backend/api/handlers/search.go
+// File: backend/api/handlers/search.go
+
 package handlers
 
 import (
-	"fmt"
+	"context"
 	"log"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +16,7 @@ import (
 type SearchHandler struct {
 	RedditService *services.RedditService
 	AIService     *services.AIService
+	initialized   bool
 }
 
 func NewSearchHandler(redditService *services.RedditService, aiService *services.AIService) *SearchHandler {
@@ -26,7 +26,22 @@ func NewSearchHandler(redditService *services.RedditService, aiService *services
 	}
 }
 
+// Init initializes the handler (like warming up connections)
+func (h *SearchHandler) Init(ctx context.Context) error {
+	if h.initialized {
+		return nil
+	}
+	
+	// Nothing to initialize yet
+	h.initialized = true
+	return nil
+}
+
 func (h *SearchHandler) HandleSearch(c *gin.Context) {
+	// Create a context with timeout for the entire request
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
 	var req models.SearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Printf("Invalid request payload: %v", err)
@@ -62,14 +77,11 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 		req.ModelName = "Claude" // Default AI model
 	}
 
-	// Check if this is a special query that needs real-time data
-	needsRealTimeData := isRealTimeDataQuery(req.Query)
-
 	// Measure execution time
 	startTime := time.Now()
 
 	// Search Reddit with timeout
-	results, err := h.RedditService.SearchReddit(req.Query, req.SearchMode, req.Limit)
+	results, err := h.RedditService.SearchReddit(ctx, req.Query, req.SearchMode, req.Limit)
 	if err != nil {
 		log.Printf("Failed to search Reddit: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -101,29 +113,18 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 
 	// Process results with AI (with error handling)
 	var reasoning, answer string
+	var reasoningSteps []models.ReasoningStep
+	var citations []models.Citation
 	aiErr := error(nil)
 	
 	// Only attempt AI processing if we have at least one result
 	if len(results) > 0 {
-		reasoning, answer, aiErr = h.AIService.ProcessResults(req.Query, results, req.ModelName)
+		reasoning, answer, reasoningSteps, citations, aiErr = h.AIService.ProcessResults(ctx, req.Query, results, req.ModelName)
 		if aiErr != nil {
 			log.Printf("AI processing error: %v", aiErr)
 			// Still continue - we'll return the raw results
 			reasoning = "AI processing failed: " + aiErr.Error()
 			answer = "The search found results, but AI analysis couldn't be completed. The raw results are still available."
-		}
-	}
-
-	// Extract reasoning steps
-	reasoningSteps := extractReasoningSteps(reasoning)
-	
-	// Generate citations from the answer
-	citations := extractCitations(answer, results)
-
-	// For real-time data queries, add disclaimer if needed
-	if needsRealTimeData {
-		if !strings.Contains(answer, "real-time") && !strings.Contains(answer, "up-to-date") {
-			answer += "\n\nNote: This information is based on Reddit posts which may not reflect real-time data. For current pricing or real-time information, please check specialized sources."
 		}
 	}
 
@@ -135,7 +136,7 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 		Results:        results,
 		TotalCount:     len(results),
 		Reasoning:      reasoning,
-		ReasoningSteps: reasoningSteps, // Add this field
+		ReasoningSteps: reasoningSteps,
 		Answer:         answer,
 		Citations:      citations,
 		ElapsedTime:    elapsedTime,
@@ -149,290 +150,4 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
-}
-
-// isRealTimeDataQuery identifies queries that need real-time data
-func isRealTimeDataQuery(query string) bool {
-	query = strings.ToLower(query)
-	
-	// Price-related queries
-	pricePatterns := []string{
-		"price", "worth", "value", "cost", "how much", "market cap",
-		"trading at", "current", "today", "now", "latest",
-	}
-	
-	// Assets that typically need real-time data
-	assetPatterns := []string{
-		"bitcoin", "btc", "crypto", "stock", "share", "market", 
-		"currency", "forex", "exchange rate", "interest rate",
-	}
-	
-	// Check for combinations of price and asset patterns
-	for _, price := range pricePatterns {
-		if strings.Contains(query, price) {
-			for _, asset := range assetPatterns {
-				if strings.Contains(query, asset) {
-					return true
-				}
-			}
-		}
-	}
-	
-	// Check for specific time-sensitive patterns
-	timePatterns := []string{
-		"right now", "currently", "latest news", "breaking news",
-		"live", "real time", "real-time", "today's", "happening now",
-	}
-	
-	for _, pattern := range timePatterns {
-		if strings.Contains(query, pattern) {
-			return true
-		}
-	}
-	
-	return false
-}
-
-// extractCitations identifies and formats citations from the answer text
-func extractCitations(answer string, results []models.SearchResult) []models.Citation {
-	var citations []models.Citation
-	
-	// Look for explicit citation patterns like [1], [2], etc.
-	re := regexp.MustCompile(`\[(\d+)\]`)
-	matches := re.FindAllStringSubmatch(answer, -1)
-	
-	for _, match := range matches {
-		if len(match) < 2 {
-			continue
-		}
-		
-		// Parse the citation number
-		index := 0
-		_, err := fmt.Sscanf(match[1], "%d", &index)
-		if err != nil || index <= 0 || index > len(results) {
-			continue
-		}
-		
-		// Adjust for 0-based indexing
-		resultIndex := index - 1
-		
-		// Add citation
-		citation := models.Citation{
-			Index:     index,
-			Text:      getCitationContext(answer, match[0]),
-			URL:       results[resultIndex].URL,
-			Title:     results[resultIndex].Title,
-			Type:      results[resultIndex].Type,
-			Subreddit: results[resultIndex].Subreddit,
-		}
-		
-		// Check if this citation already exists (avoid duplicates)
-		isDuplicate := false
-		for _, existing := range citations {
-			if existing.Index == citation.Index {
-				isDuplicate = true
-				break
-			}
-		}
-		
-		if !isDuplicate {
-			citations = append(citations, citation)
-		}
-	}
-	
-	// If no explicit citations found, try to find "Result X mentions..." patterns
-	if len(citations) == 0 {
-		resultRe := regexp.MustCompile(`(?i)(?:Result|Post|Comment)\s+(\d+)`)
-		matches := resultRe.FindAllStringSubmatch(answer, -1)
-		
-		for _, match := range matches {
-			if len(match) < 2 {
-				continue
-			}
-			
-			// Parse the result number
-			index := 0
-			_, err := fmt.Sscanf(match[1], "%d", &index)
-			if err != nil || index <= 0 || index > len(results) {
-				continue
-			}
-			
-			// Adjust for 0-based indexing
-			resultIndex := index - 1
-			
-			// Add citation
-			citation := models.Citation{
-				Index:     index,
-				Text:      getCitationContext(answer, match[0]),
-				URL:       results[resultIndex].URL,
-				Title:     results[resultIndex].Title,
-				Type:      results[resultIndex].Type,
-				Subreddit: results[resultIndex].Subreddit,
-			}
-			
-			// Check for duplicates
-			isDuplicate := false
-			for _, existing := range citations {
-				if existing.Index == citation.Index {
-					isDuplicate = true
-					break
-				}
-			}
-			
-			if !isDuplicate {
-				citations = append(citations, citation)
-			}
-		}
-	}
-	
-	// If still no citations found but we have specific subreddit mentions, use those
-	if len(citations) == 0 {
-		subredditRe := regexp.MustCompile(`r/([a-zA-Z0-9_]+)`)
-		matches := subredditRe.FindAllStringSubmatch(answer, -1)
-		
-		for _, match := range matches {
-			if len(match) < 2 {
-				continue
-			}
-			
-			subredditName := match[1]
-			
-			// Find matching results
-			for i, result := range results {
-				if strings.EqualFold(result.Subreddit, subredditName) {
-					// Add citation
-					citation := models.Citation{
-						Index:     i + 1,
-						Text:      getCitationContext(answer, match[0]),
-						URL:       result.URL,
-						Title:     result.Title,
-						Type:      result.Type,
-						Subreddit: result.Subreddit,
-					}
-					
-					// Check for duplicates
-					isDuplicate := false
-					for _, existing := range citations {
-						if existing.Index == citation.Index {
-							isDuplicate = true
-							break
-						}
-					}
-					
-					if !isDuplicate {
-						citations = append(citations, citation)
-						break // Just add the first match for each subreddit
-					}
-				}
-			}
-		}
-	}
-	
-	return citations
-}
-
-// getCitationContext returns the sentence or context around a citation
-func getCitationContext(text, marker string) string {
-	// Find the sentence containing the citation
-	sentences := splitIntoSentences(text)
-	
-	for _, sentence := range sentences {
-		if strings.Contains(sentence, marker) {
-			// Clean up the sentence
-			clean := strings.TrimSpace(sentence)
-			
-			// If it's too long, truncate it
-			if len(clean) > 150 {
-				clean = clean[:147] + "..."
-			}
-			
-			return clean
-		}
-	}
-	
-	// If we can't find the exact sentence, return a placeholder
-	return "Referenced content"
-}
-
-// splitIntoSentences breaks text into sentences
-func splitIntoSentences(text string) []string {
-	// Regex for sentence splitting that handles abbreviations and special cases
-	re := regexp.MustCompile(`[.!?]\s+[A-Z]`)
-	
-	// Find all sentence boundaries
-	boundaries := re.FindAllStringIndex(text, -1)
-	
-	// If no boundaries found, return the whole text as one sentence
-	if len(boundaries) == 0 {
-		return []string{text}
-	}
-	
-	// Build sentences
-	var sentences []string
-	prevEnd := 0
-	
-	for _, boundary := range boundaries {
-		// End of sentence is position of the punctuation mark
-		endPos := boundary[0] + 1
-		sentences = append(sentences, text[prevEnd:endPos])
-		
-		// Start of next sentence is after the space
-		prevEnd = boundary[0] + 2
-	}
-	
-	// Add the last sentence if there's text left
-	if prevEnd < len(text) {
-		sentences = append(sentences, text[prevEnd:])
-	}
-	
-	return sentences
-}
-
-// Add this new function to extract reasoning steps
-func extractReasoningSteps(reasoning string) []models.ReasoningStep {
-    var steps []models.ReasoningStep
-    
-    // Match step headers like "## Step 1: Understanding the query"
-    stepRegex := regexp.MustCompile(`(?m)^#+\s*Step\s+\d+:?\s*(.+)$`)
-    matches := stepRegex.FindAllStringSubmatchIndex(reasoning, -1)
-    
-    if len(matches) == 0 {
-        // If no explicit steps, try to find other headers
-        headerRegex := regexp.MustCompile(`(?m)^#+\s*(.+)$`)
-        matches = headerRegex.FindAllStringSubmatchIndex(reasoning, -1)
-    }
-    
-    for i, match := range matches {
-        // Extract the step title
-        titleStart := match[2]
-        titleEnd := match[3]
-        title := reasoning[titleStart:titleEnd]
-        
-        // Determine the content boundaries
-        contentStart := match[1] // End of the header
-        contentEnd := len(reasoning)
-        
-        // If there's a next match, use its start as this step's end
-        if i < len(matches)-1 {
-            contentEnd = matches[i+1][0]
-        }
-        
-        // Extract the content
-        content := strings.TrimSpace(reasoning[contentStart:contentEnd])
-        
-        steps = append(steps, models.ReasoningStep{
-            Title:   title,
-            Content: content,
-        })
-    }
-    
-    // If we couldn't find any steps, create a single generic step
-    if len(steps) == 0 && len(reasoning) > 0 {
-        steps = append(steps, models.ReasoningStep{
-            Title:   "Analysis of search results",
-            Content: reasoning,
-        })
-    }
-    
-    return steps
 }

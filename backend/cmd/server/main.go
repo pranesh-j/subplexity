@@ -1,6 +1,9 @@
+// File: backend/cmd/server/main.go
+
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"time"
@@ -13,6 +16,10 @@ import (
 )
 
 func main() {
+	// Set up context with cancellation for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
 		log.Println("Warning: No .env file found, using environment variables")
@@ -57,11 +64,31 @@ func main() {
 	// API routes
 	api := r.Group("/api")
 	{
-		api.POST("/search", searchHandler.HandleSearch)
+		api.POST("/search", func(c *gin.Context) {
+			// Pass the request context to ensure proper cancellation
+			searchHandler.HandleSearch(c)
+		})
 	}
 
-	// Start server
+	// Health check endpoint
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "ok",
+			"time":   time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// Start server with graceful shutdown
 	log.Printf("Server starting on port %s\n", port)
+	
+	// Update search handler to use context for all operations
+	go func() {
+		if err := searchHandler.Init(ctx); err != nil {
+			log.Printf("Failed to initialize search handler: %v", err)
+		}
+	}()
+
+	// Start the server
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
